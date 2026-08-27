@@ -73,6 +73,8 @@ void Error_Handler(void);
 #define LPUART1_RX_GPIO_Port GPIOA
 #define Motor5_Pin GPIO_PIN_4
 #define Motor5_GPIO_Port GPIOA
+#define Motor3_Pin GPIO_PIN_5
+#define Motor3_GPIO_Port GPIOC
 #define Motor8_Pin GPIO_PIN_1
 #define Motor8_GPIO_Port GPIOB
 #define Motor4_Pin GPIO_PIN_11

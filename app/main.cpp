@@ -77,16 +77,17 @@ UART_DMA<&huart5> uart5(uart5_tx_buf, sizeof(uart5_tx_buf), uart5_rx_buf, sizeof
 GPIO motor1_pin(Motor8_GPIO_Port, Motor8_Pin);
 GPIO motor2_pin(Motor5_GPIO_Port, Motor5_Pin);
 GPIO motor3_pin(Motor4_GPIO_Port, Motor4_Pin);
+GPIO motor4_pin(Motor3_GPIO_Port, Motor3_Pin);
 
 Encoder<&htim8> motor1_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim5> motor2_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim4> motor3_encoder(2048, 2.0f, CONTROL_DT);
-Encoder<&htim1> x_encoder(2048, 1.0f, CONTROL_DT);
-Encoder<&htim3> y_encoder(2048, 1.0f, CONTROL_DT);
+Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
 
 Motor<&htim15> motor1(TIM_CHANNEL_1, motor1_pin);
 Motor<&htim20> motor2(TIM_CHANNEL_2, motor2_pin);
 Motor<&htim20> motor3(TIM_CHANNEL_1, motor3_pin);
+Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
 
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
@@ -183,12 +184,12 @@ extern "C" void app_main() {
   motor1_encoder.start();
   motor2_encoder.start();
   motor3_encoder.start();
-  x_encoder.start();
-  y_encoder.start();
+  motor4_encoder.start();
 
   motor1.start();
   motor2.start();
   motor3.start();
+  motor4.start();
 
   imu.start();
 
@@ -218,11 +219,8 @@ void timer_callback(void *) {
   motor1_encoder.update();
   motor2_encoder.update();
   motor3_encoder.update();
-  x_encoder.update();
-  y_encoder.update();
+  motor4_encoder.update();
   ps3.update();
-
-  update_localization();
 
   if (ps3.get_key_down(PS3Key::SELECT)) {
     competition_running = false;
@@ -377,40 +375,6 @@ void collect_block_and_watering_can() { // ブロックとじょうろが同時�
   stop_drive_wheels();
   block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
   watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
-}
-
-void update_localization() {
-  // 角度差分をとる
-  float raw_yaw = imu_yaw;
-  static float pre_raw_yaw = raw_yaw;
-  float delta_yaw = -(raw_yaw - pre_raw_yaw); // 反時計回りに正となるように符号を反転
-  if (delta_yaw > std::numbers::pi) {
-    delta_yaw -= 2.0f * std::numbers::pi;
-  } else if (delta_yaw < -std::numbers::pi) {
-    delta_yaw += 2.0f * std::numbers::pi;
-  }
-  pre_raw_yaw = raw_yaw;
-  robot_pose.yaw += delta_yaw; // 角度の累積
-
-  // オドメータの更新
-  static float pre_x_position = x_encoder.get_position();
-  static float pre_y_position = y_encoder.get_position();
-  const float rev_to_distance = 2.0f * std::numbers::pi * ODOMETRY_WHEEL_RADIUS; // 1回転あたりの移動距離[m]
-  float delta_x = (x_encoder.get_position() - pre_x_position) * rev_to_distance;
-  float delta_y =
-      -(y_encoder.get_position() - pre_y_position) * rev_to_distance; // y軸エンコーダが逆向きに回転するため符号を反転
-  pre_x_position = x_encoder.get_position();
-  pre_y_position = y_encoder.get_position();
-
-  // ロボット座標系からワールド座標系に変換
-  float cos_yaw = std::cos(robot_pose.yaw);
-  float sin_yaw = std::sin(robot_pose.yaw);
-
-  // ワールド座標系での変位を計算
-  float world_delta_x = delta_x * cos_yaw - delta_y * sin_yaw;
-  float world_delta_y = delta_x * sin_yaw + delta_y * cos_yaw;
-  robot_pose.x += world_delta_x;
-  robot_pose.y += world_delta_y;
 }
 
 Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
