@@ -38,18 +38,18 @@ using halx::peripheral::ST_TIM;
 constexpr float CONTROL_DT = 0.01f;
 
 constexpr float ROBOT_RADIUS = 0.177f;
-constexpr float DRIVE_WHEEL_RADIUS = 0.05f;
+constexpr float DRIVE_WHEEL_RADIUS = 0.160f;
 constexpr float ODOMETRY_WHEEL_RADIUS = 0.03f;
 
-constexpr float DRIVE_WHEEL_THETA_1 = std::numbers::pi / 6.0f;
-constexpr float DRIVE_WHEEL_THETA_2 = std::numbers::pi * 5.0f / 6.0f;
-constexpr float DRIVE_WHEEL_THETA_3 = std::numbers::pi * 3.0f / 2.0f;
+constexpr float DRIVE_WHEEL_THETA_1 = 90 * std::numbers::pi / 180.0f;
+constexpr float DRIVE_WHEEL_THETA_2 = 199 * std::numbers::pi / 180.0f;
+constexpr float DRIVE_WHEEL_THETA_3 = 340 * std::numbers::pi / 180.0f;
 
 constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
     .kp = 0.01f,
     .ki = 0.7f,
     .kd = 0.0f,
-    .output_upper_limit = 1.0f,
+    .output_upper_limit = 0.2f,
     .integral_upper_limit = 1.0f,
 };
 
