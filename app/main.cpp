@@ -49,7 +49,7 @@ constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
     .kp = 0.01f,
     .ki = 0.7f,
     .kd = 0.0f,
-    .output_upper_limit = 0.2f,
+    .output_upper_limit = 0.6f,
     .integral_upper_limit = 1.0f,
 };
 
@@ -62,8 +62,8 @@ constexpr PIDParameters P2P_Y_PID_PARAMS{
     .output_upper_limit = 0.3f,
 };
 constexpr PIDParameters P2P_YAW_PID_PARAMS{
-    .kp = 0.05f,
-    .output_upper_limit = std::numbers::pi / 2.0f,
+    .kp = 1.4f,
+    .output_upper_limit = std::numbers::pi / 1.5f,
 };
 
 UART_IT<&hlpuart1> lpuart1;
@@ -110,6 +110,7 @@ FeetechPositionControl block_holder_servo(uart5, 1, 521);  // 521-3353   2028で
 FeetechPositionControl watering_can_servo(uart5, 2, 1015); // 1015-1560
 
 std::atomic<float> imu_yaw = 0.0f;
+std::atomic<float> debug_world_velocity_yaw = 0.0f;
 
 std::atomic<float> debug_pose_x = 0.0f;
 std::atomic<float> debug_pose_y = 0.0f;
@@ -201,6 +202,8 @@ extern "C" void app_main() {
     //        debug_pose_yaw.load(), block_holder_servo.get_position(), watering_can_servo.get_position());
     // printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
     // printf("yaw %f\n\r", debug_pose_yaw.load());
+    printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad\r\n", debug_world_velocity_yaw.load(),
+           imu_yaw.load(), target_yaw);
     halx::core::delay(10);
   }
 }
@@ -255,7 +258,7 @@ void timer_callback(void *) {
     // 前後・左右・斜めのどの並進方向でもtarget_yawを保って直進する。
     const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
-    velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+    velocity.x = -0.5f * ps3.get_axis(PS3Axis::LEFT_X);
     velocity.y = 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
     if (velocity.x == 0.0f && velocity.y == 0.0f && velocity.yaw == 0.0f) {
       stop_drive_wheels();
@@ -299,14 +302,15 @@ Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
   Velocity world_velocity;
   world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
   world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
-  const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
+  const float yaw_error = std::remainder(-target_pose.yaw + now_pose.yaw, 2.0f * std::numbers::pi);
   world_velocity.yaw = std::abs(yaw_error) <= SEQUENCE_YAW_TOLERANCE ? 0.0f : p2p_yaw_pid.solve(yaw_error);
+  debug_world_velocity_yaw = world_velocity.yaw;
 
   Velocity robot_velocity;
   robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
   robot_velocity.y = world_velocity.y * std::cos(now_pose.yaw) - world_velocity.x * std::sin(now_pose.yaw);
   robot_velocity.yaw = world_velocity.yaw;
-
+  // robot_velocity.yaw = 0;
   return robot_velocity;
 }
 
