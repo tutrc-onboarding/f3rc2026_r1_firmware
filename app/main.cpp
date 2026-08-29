@@ -106,8 +106,12 @@ constexpr int BLOCK_HOLDER_CLOSED_POSITION = 2028;
 constexpr int WATERING_CAN_RELEASE_POSITION = 1015;
 constexpr int WATERING_CAN_COLLECT_POSITION = 1560;
 
-FeetechPositionControl block_holder_servo(uart5, 1, 521);  // 521-3353   2028でブロックを回収する
-FeetechPositionControl watering_can_servo(uart5, 2, 1015); // 1015-1560
+FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2250); // 2250-3236
+FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 542);  // 542-1680
+FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 523);  // 523-4000
+FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 1123); // 1123-3261
+FeetechPositionControl RAIL_REVO_2(uart5, 2, 525);     // 525-3272
+FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 579);  // 579-3022
 
 std::atomic<float> imu_yaw = 0.0f;
 std::atomic<float> debug_world_velocity_yaw = 0.0f;
@@ -152,6 +156,17 @@ enum class AutoControlMode {
   MANUAL,
 };
 
+enum class ActuaterProf {
+  HOLD_BLOCK,
+  RELEASE_BLOCK,
+  HOLD_PLANT,
+  RELEASE_PLANT,
+  BLOCK_PUTTER_COLOSE,
+  BLOCK_PUTTER_OPEN,
+  RAIL_REVO_UP,
+  RAIL_REVO_DOWN,
+};
+
 Pose robot_pose = R2_START_POSE;
 float target_yaw = R2_START_POSE.yaw;
 AutoControlMode auto_control_mode = AutoControlMode::EMERGENCY_STOP;
@@ -184,8 +199,7 @@ extern "C" void app_main() {
 
   imu.start();
 
-  // block_holder_servo.start();
-  // watering_can_servo.start();
+  BLOCK_HOLDER_6.start();
 
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
@@ -202,8 +216,8 @@ extern "C" void app_main() {
     //        debug_pose_yaw.load(), block_holder_servo.get_position(), watering_can_servo.get_position());
     // printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
     // printf("yaw %f\n\r", debug_pose_yaw.load());
-    printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad\r\n", debug_world_velocity_yaw.load(),
-           imu_yaw.load(), target_yaw);
+    printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
+           debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
     halx::core::delay(10);
   }
 }
@@ -214,6 +228,9 @@ void timer_callback(void *) {
   motor3_encoder.update();
   // motor4_encoder.update();
   ps3.update();
+
+  BLOCK_HOLDER_6.update();
+
   update_localization();
 
   if (ps3.get_key_down(PS3Key::SELECT)) {
@@ -253,6 +270,12 @@ void timer_callback(void *) {
     if (ps3.get_key_down(PS3Key::DOWN)) {
       target_yaw = ushiro_theta;
     }
+    if (ps3.get_key(PS3Key::R2)) {
+      BLOCK_HOLDER_6.set_position(2250);
+    }
+    if (ps3.get_key(PS3Key::L2)) {
+      BLOCK_HOLDER_6.set_position(3236);
+    }
 
     // IMUのyaw角から旋回補正を作る。旋回成分は3輪すべてに加算されるため、
     // 前後・左右・斜めのどの並進方向でもtarget_yawを保って直進する。
@@ -288,12 +311,6 @@ void move_servo(FeetechPositionControl &servo, float target_position) {
   servo.set_position(target_position);
 }
 
-void collect_block_and_watering_can() { // ブロックとじょうろが同時に取れる前提で書いた
-  stop_drive_wheels();
-  block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
-  watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
-}
-
 Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
   static PIDController p2p_x_pid(P2P_X_PID_PARAMS, CONTROL_DT);
   static PIDController p2p_y_pid(P2P_Y_PID_PARAMS, CONTROL_DT);
@@ -311,7 +328,7 @@ Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
     world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
   }
 
-    debug_world_velocity_yaw = world_velocity.yaw;
+  debug_world_velocity_yaw = world_velocity.yaw;
 
   Velocity robot_velocity;
   robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
