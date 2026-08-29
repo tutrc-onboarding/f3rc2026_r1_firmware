@@ -46,7 +46,7 @@ constexpr float DRIVE_WHEEL_THETA_2 = 199 * std::numbers::pi / 180.0f;
 constexpr float DRIVE_WHEEL_THETA_3 = 340 * std::numbers::pi / 180.0f;
 
 constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
-    .kp = 0.001f,
+    .kp = 0.01f,
     .ki = 0.7f,
     .kd = 0.0f,
     .output_upper_limit = 0.2f,
@@ -62,7 +62,7 @@ constexpr PIDParameters P2P_Y_PID_PARAMS{
     .output_upper_limit = 0.3f,
 };
 constexpr PIDParameters P2P_YAW_PID_PARAMS{
-    .kp = 1.0f,
+    .kp = 0.05f,
     .output_upper_limit = std::numbers::pi / 2.0f,
 };
 
@@ -257,7 +257,11 @@ void timer_callback(void *) {
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
     velocity.y = 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
-    drive_wheels(velocity);
+    if (velocity.x == 0.0f && velocity.y == 0.0f && velocity.yaw == 0.0f) {
+      stop_drive_wheels();
+    } else {
+      drive_wheels(velocity);
+    }
     break;
   }
   }
