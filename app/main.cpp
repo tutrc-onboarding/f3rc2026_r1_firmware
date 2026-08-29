@@ -139,10 +139,10 @@ constexpr Pose R2_START_POSE{0.0f, 0.0f, 0.5f * std::numbers::pi};
 
 // 目標角度
 
-const float mae_theta = 0.5f * std::numbers::pi;
-const float migi_theta = 0.0f * std::numbers::pi;
-const float hidari_theta = 1.0f * std::numbers::pi;
-const float ushiro_thta = 1.5f * std::numbers::pi;
+constexpr float mae_theta = 0.5f * std::numbers::pi;
+constexpr float migi_theta = 0.0f * std::numbers::pi;
+constexpr float hidari_theta = 1.0f * std::numbers::pi;
+constexpr float ushiro_theta = 1.5f * std::numbers::pi;
 
 // コントロールモード一覧
 enum class AutoControlMode {
@@ -151,6 +151,7 @@ enum class AutoControlMode {
 };
 
 Pose robot_pose = R2_START_POSE;
+float target_yaw = R2_START_POSE.yaw;
 AutoControlMode auto_control_mode = AutoControlMode::EMERGENCY_STOP;
 
 void timer_callback(void *);
@@ -209,6 +210,7 @@ void timer_callback(void *) {
   motor3_encoder.update();
   // motor4_encoder.update();
   ps3.update();
+  update_localization();
 
   if (ps3.get_key_down(PS3Key::SELECT)) {
     competition_running = false;
@@ -226,6 +228,7 @@ void timer_callback(void *) {
   case AutoControlMode::MANUAL: {
     if (ps3.get_key_down(PS3Key::START)) {
       robot_pose = R2_START_POSE;
+      target_yaw = R2_START_POSE.yaw;
       competition_ticks = 0;
       competition_running = true;
       // block_holder_servo.set_position(BLOCK_HOLDER_OPEN_POSITION);
@@ -235,19 +238,23 @@ void timer_callback(void *) {
     }
     // メモ　デバッグするときは下のコメントアウトを外してset_auto_control_modeをコメントアウトする
     if (ps3.get_key_down(PS3Key::LEFT)) {
+      target_yaw = hidari_theta;
     }
     if (ps3.get_key_down(PS3Key::RIGHT)) {
+      target_yaw = migi_theta;
     }
     if (ps3.get_key_down(PS3Key::UP)) {
+      target_yaw = mae_theta;
     }
     if (ps3.get_key_down(PS3Key::DOWN)) {
+      target_yaw = ushiro_theta;
     }
 
-    Velocity velocity;
+    // 並進は左スティック、旋回はIMUのyaw角を使った目標角度制御にする。
+    const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
+    Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
     velocity.y = 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
-    // velocity.yaw = -(std::numbers::pi / 2.0f) * ps3.get_axis(PS3Axis::RIGHT_X); //
-    // 反時計回りに正となるように符号を反転
     drive_wheels(velocity);
     break;
   }
@@ -264,6 +271,10 @@ void timer_callback(void *) {
 }
 
 void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
+
+void update_localization() {
+  robot_pose.yaw = std::remainder(imu_yaw.load(), 2.0f * std::numbers::pi);
+}
 
 void move_servo(FeetechPositionControl &servo, float target_position) {
   stop_drive_wheels();
