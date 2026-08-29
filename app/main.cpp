@@ -46,7 +46,7 @@ constexpr float DRIVE_WHEEL_THETA_2 = 199 * std::numbers::pi / 180.0f;
 constexpr float DRIVE_WHEEL_THETA_3 = 340 * std::numbers::pi / 180.0f;
 
 constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
-    .kp = 0.01f,
+    .kp = 0.001f,
     .ki = 0.7f,
     .kd = 0.0f,
     .output_upper_limit = 0.2f,
@@ -128,7 +128,7 @@ struct Pose {
 };
 
 constexpr float SEQUENCE_POSITION_TOLERANCE = 0.05f; // [m]　許容誤差
-constexpr float SEQUENCE_YAW_TOLERANCE = 0.05f;      // [rad]
+constexpr float SEQUENCE_YAW_TOLERANCE = 0.87f;      // yawの許容誤差
 constexpr uint32_t WATERING_START_TICKS = 500; // [1/100秒]倉庫Bから白ブロックを運んでから何秒待って水やりを開始するか
 uint32_t competition_ticks = 0;                // 競技時間を計測
 uint32_t waiting_ticks = 0;                    // どんくらい待ってるか
@@ -272,9 +272,7 @@ void timer_callback(void *) {
 
 void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
 
-void update_localization() {
-  robot_pose.yaw = std::remainder(imu_yaw.load(), 2.0f * std::numbers::pi);
-}
+void update_localization() { robot_pose.yaw = std::remainder(imu_yaw.load(), 2.0f * std::numbers::pi); }
 
 void move_servo(FeetechPositionControl &servo, float target_position) {
   stop_drive_wheels();
@@ -296,7 +294,7 @@ Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
   world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
   world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
   const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
-  world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
+  world_velocity.yaw = std::abs(yaw_error) <= SEQUENCE_YAW_TOLERANCE ? 0.0f : p2p_yaw_pid.solve(yaw_error);
 
   Velocity robot_velocity;
   robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
