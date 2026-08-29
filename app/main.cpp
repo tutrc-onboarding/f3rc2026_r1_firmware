@@ -38,7 +38,7 @@ using halx::peripheral::ST_TIM;
 constexpr float CONTROL_DT = 0.01f;
 
 constexpr float ROBOT_RADIUS = 0.177f;
-constexpr float DRIVE_WHEEL_RADIUS = 0.160f;
+constexpr float DRIVE_WHEEL_RADIUS = 0.050f;
 constexpr float ODOMETRY_WHEEL_RADIUS = 0.03f;
 
 constexpr float DRIVE_WHEEL_THETA_1 = 90 * std::numbers::pi / 180.0f;
@@ -128,11 +128,12 @@ struct Pose {
 };
 
 constexpr float SEQUENCE_POSITION_TOLERANCE = 0.05f; // [m]　許容誤差
-constexpr float SEQUENCE_YAW_TOLERANCE = 0.87f;      // yawの許容誤差
-constexpr uint32_t WATERING_START_TICKS = 500; // [1/100秒]倉庫Bから白ブロックを運んでから何秒待って水やりを開始するか
-uint32_t competition_ticks = 0;                // 競技時間を計測
-uint32_t waiting_ticks = 0;                    // どんくらい待ってるか
-bool competition_running = false;              // 計測のトリガー的な
+// 直進中は、この範囲を超えた向きずれをIMUで検出して旋回速度にフィードバックする。
+constexpr float SEQUENCE_YAW_TOLERANCE = 0.08f; // [rad] yawの許容誤差（約5度）
+constexpr uint32_t WATERING_START_TICKS = 500;  // [1/100秒]倉庫Bから白ブロックを運んでから何秒待って水やりを開始するか
+uint32_t competition_ticks = 0;                 // 競技時間を計測
+uint32_t waiting_ticks = 0;                     // どんくらい待ってるか
+bool competition_running = false;               // 計測のトリガー的な
 
 // R2スタートゾーンの中心を原点、右を+x、上を+y
 constexpr Pose R2_START_POSE{0.0f, 0.0f, 0.5f * std::numbers::pi};
@@ -250,7 +251,8 @@ void timer_callback(void *) {
       target_yaw = ushiro_theta;
     }
 
-    // 並進は左スティック、旋回はIMUのyaw角を使った目標角度制御にする。
+    // IMUのyaw角から旋回補正を作る。旋回成分は3輪すべてに加算されるため、
+    // 前後・左右・斜めのどの並進方向でもtarget_yawを保って直進する。
     const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
