@@ -135,7 +135,14 @@ uint32_t waiting_ticks = 0;                    // どんくらい待ってるか
 bool competition_running = false;              // 計測のトリガー的な
 
 // R2スタートゾーンの中心を原点、右を+x、上を+y
-constexpr Pose R2_START_POSE{0.0f, 0.0f, -0.5f * std::numbers::pi};
+constexpr Pose R2_START_POSE{0.0f, 0.0f, 0.5f * std::numbers::pi};
+
+// 目標角度
+
+const float mae_theta = 0.5f * std::numbers::pi;
+const float migi_theta = 0.0f * std::numbers::pi;
+const float hidari_theta = 1.0f * std::numbers::pi;
+const float ushiro_thta = 1.5f * std::numbers::pi;
 
 // コントロールモード一覧
 enum class AutoControlMode {
@@ -228,105 +235,96 @@ void timer_callback(void *) {
     }
     // メモ　デバッグするときは下のコメントアウトを外してset_auto_control_modeをコメントアウトする
     if (ps3.get_key_down(PS3Key::LEFT)) {
-      block_holder_servo.set_position(BLOCK_HOLDER_OPEN_POSITION);
     }
     if (ps3.get_key_down(PS3Key::RIGHT)) {
-      block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
     }
     if (ps3.get_key_down(PS3Key::UP)) {
-      watering_can_servo.set_position(WATERING_CAN_RELEASE_POSITION);
     }
     if (ps3.get_key_down(PS3Key::DOWN)) {
-      watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
-    }
-    if (ps3.get_key_down(PS3Key::R2)) {
-      block_holder_servo.set_position(block_holder_servo.get_position() + 10);
-    }
-    if (ps3.get_key_down(PS3Key::L2)) {
-      block_holder_servo.set_position(block_holder_servo.get_position() - 10);
     }
 
     Velocity velocity;
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
     velocity.y = 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
-    velocity.yaw = -(std::numbers::pi / 2.0f) * ps3.get_axis(PS3Axis::RIGHT_X); // 反時計回りに正となるように符号を反転
+    // velocity.yaw = -(std::numbers::pi / 2.0f) * ps3.get_axis(PS3Axis::RIGHT_X); //
+    // 反時計回りに正となるように符号を反転
     drive_wheels(velocity);
     break;
   }
   }
-    // move_to_pose(行く場所, 次の動作)
-    // move_servo(動かすサーボ, set_position)
+  // move_to_pose(行く場所, 次の動作)
+  // move_servo(動かすサーボ, set_position)
 
-    if (competition_running) {
-      ++competition_ticks;
-    }
-    debug_pose_x = robot_pose.x;
-    debug_pose_y = robot_pose.y;
-    debug_pose_yaw = robot_pose.yaw;
+  if (competition_running) {
+    ++competition_ticks;
   }
+  debug_pose_x = robot_pose.x;
+  debug_pose_y = robot_pose.y;
+  debug_pose_yaw = robot_pose.yaw;
+}
 
-  void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
+void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
 
-  void move_servo(FeetechPositionControl & servo, float target_position) {
-    stop_drive_wheels();
-    servo.set_position(target_position);
-  }
+void move_servo(FeetechPositionControl &servo, float target_position) {
+  stop_drive_wheels();
+  servo.set_position(target_position);
+}
 
-  void collect_block_and_watering_can() { // ブロックとじょうろが同時に取れる前提で書いた
-    stop_drive_wheels();
-    block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
-    watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
-  }
+void collect_block_and_watering_can() { // ブロックとじょうろが同時に取れる前提で書いた
+  stop_drive_wheels();
+  block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
+  watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
+}
 
-  Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
-    static PIDController p2p_x_pid(P2P_X_PID_PARAMS, CONTROL_DT);
-    static PIDController p2p_y_pid(P2P_Y_PID_PARAMS, CONTROL_DT);
-    static PIDController p2p_yaw_pid(P2P_YAW_PID_PARAMS, CONTROL_DT);
+Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
+  static PIDController p2p_x_pid(P2P_X_PID_PARAMS, CONTROL_DT);
+  static PIDController p2p_y_pid(P2P_Y_PID_PARAMS, CONTROL_DT);
+  static PIDController p2p_yaw_pid(P2P_YAW_PID_PARAMS, CONTROL_DT);
 
-    Velocity world_velocity;
-    world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
-    world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
-    const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
-    world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
+  Velocity world_velocity;
+  world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
+  world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
+  const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
+  world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
 
-    Velocity robot_velocity;
-    robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
-    robot_velocity.y = world_velocity.y * std::cos(now_pose.yaw) - world_velocity.x * std::sin(now_pose.yaw);
-    robot_velocity.yaw = world_velocity.yaw;
+  Velocity robot_velocity;
+  robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
+  robot_velocity.y = world_velocity.y * std::cos(now_pose.yaw) - world_velocity.x * std::sin(now_pose.yaw);
+  robot_velocity.yaw = world_velocity.yaw;
 
-    return robot_velocity;
-  }
+  return robot_velocity;
+}
 
-  void drive_wheels(const Velocity &velocity) {
-    constexpr float VEL2RPS = 1.0f / (2.0f * std::numbers::pi * DRIVE_WHEEL_RADIUS);
+void drive_wheels(const Velocity &velocity) {
+  constexpr float VEL2RPS = 1.0f / (2.0f * std::numbers::pi * DRIVE_WHEEL_RADIUS);
 
-    float motor1_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_1) +
-                               velocity.y * std::cos(DRIVE_WHEEL_THETA_1) + ROBOT_RADIUS * velocity.yaw) *
-                              VEL2RPS;
-    float motor2_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_2) +
-                               velocity.y * std::cos(DRIVE_WHEEL_THETA_2) + ROBOT_RADIUS * velocity.yaw) *
-                              VEL2RPS;
-    float motor3_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_3) +
-                               velocity.y * std::cos(DRIVE_WHEEL_THETA_3) + ROBOT_RADIUS * velocity.yaw) *
-                              VEL2RPS;
+  float motor1_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_1) + velocity.y * std::cos(DRIVE_WHEEL_THETA_1) +
+                             ROBOT_RADIUS * velocity.yaw) *
+                            VEL2RPS;
+  float motor2_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_2) + velocity.y * std::cos(DRIVE_WHEEL_THETA_2) +
+                             ROBOT_RADIUS * velocity.yaw) *
+                            VEL2RPS;
+  float motor3_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_3) + velocity.y * std::cos(DRIVE_WHEEL_THETA_3) +
+                             ROBOT_RADIUS * velocity.yaw) *
+                            VEL2RPS;
 
-    motor2_target_rps = -motor2_target_rps;
-    motor3_target_rps = -motor3_target_rps;
+  motor2_target_rps = -motor2_target_rps;
+  motor3_target_rps = -motor3_target_rps;
 
-    float motor1_output = motor1_pid.solve(motor1_target_rps - get_motor1_feedback_rps());
-    float motor2_output = motor2_pid.solve(motor2_target_rps - get_motor2_feedback_rps());
-    float motor3_output = motor3_pid.solve(motor3_target_rps - get_motor3_feedback_rps());
+  float motor1_output = motor1_pid.solve(motor1_target_rps - get_motor1_feedback_rps());
+  float motor2_output = motor2_pid.solve(motor2_target_rps - get_motor2_feedback_rps());
+  float motor3_output = motor3_pid.solve(motor3_target_rps - get_motor3_feedback_rps());
 
-    motor1.set_output(motor1_output);
-    motor2.set_output(motor2_output);
-    motor3.set_output(motor3_output);
-  }
+  motor1.set_output(motor1_output);
+  motor2.set_output(motor2_output);
+  motor3.set_output(motor3_output);
+}
 
-  void stop_drive_wheels() {
-    motor1_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-    motor2_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-    motor3_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-    motor1.set_output(0.0f);
-    motor2.set_output(0.0f);
-    motor3.set_output(0.0f);
-  }
+void stop_drive_wheels() {
+  motor1_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+  motor2_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+  motor3_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+  motor1.set_output(0.0f);
+  motor2.set_output(0.0f);
+  motor3.set_output(0.0f);
+}
