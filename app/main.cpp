@@ -77,17 +77,26 @@ UART_DMA<&huart5> uart5(uart5_tx_buf, sizeof(uart5_tx_buf), uart5_rx_buf, sizeof
 GPIO motor1_pin(Motor8_GPIO_Port, Motor8_Pin);
 GPIO motor2_pin(Motor5_GPIO_Port, Motor5_Pin);
 GPIO motor3_pin(Motor4_GPIO_Port, Motor4_Pin);
-GPIO motor4_pin(Motor3_GPIO_Port, Motor3_Pin);
+// GPIO motor4_pin(Motor3_GPIO_Port, Motor3_Pin);
 
 Encoder<&htim8> motor1_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim5> motor2_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim4> motor3_encoder(2048, 2.0f, CONTROL_DT);
-Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
+// Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
+
+// 実機検証結果: motor2はencoder3、motor3は反転したencoder2を使用する。
+float get_motor1_feedback_rps() { return motor1_encoder.get_rps(); }
+float get_motor2_feedback_rps() { return motor3_encoder.get_rps(); }
+float get_motor3_feedback_rps() { return -motor2_encoder.get_rps(); }
 
 Motor<&htim15> motor1(TIM_CHANNEL_1, motor1_pin);
 Motor<&htim20> motor2(TIM_CHANNEL_2, motor2_pin);
 Motor<&htim20> motor3(TIM_CHANNEL_1, motor3_pin);
-Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
+// Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
+
+PIDController motor1_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+PIDController motor2_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
@@ -127,39 +136,11 @@ bool competition_running = false;              // 計測のトリガー的な
 
 // R2スタートゾーンの中心を原点、右を+x、上を+y
 constexpr Pose R2_START_POSE{0.0f, 0.0f, -0.5f * std::numbers::pi};
-constexpr Pose WAREHOUSE_C_POSE{-1.60f, 0.075f, -0.5f * std::numbers::pi};
-constexpr Pose WAREHOUSE_B_POSE{-1.60f, 0.90f, -0.5f * std::numbers::pi};
-constexpr Pose WAREHOUSE_A_POSE{-1.60f, 1.725f, 0.0f};
-constexpr Pose GARDEN_BLACK_BLOCK_POSE{1.65f, 0.30f, 0.5f * std::numbers::pi};
-constexpr Pose GARDEN_WHITE_BLOCK_POSE{1.65f, 0.90f, 0.5 * std::numbers::pi};
-constexpr Pose GARDEN_WATERING_POSE{1.65f, 1.20f, 0.0f};
-// ↓回転後の座標
-constexpr Pose WAREHOUSE_C_EXIT_POSE{WAREHOUSE_C_POSE.x, WAREHOUSE_C_POSE.y, 0.5f * std::numbers::pi};
-constexpr Pose GARDEN_BLACK_BLOCK_EXIT_POSE{GARDEN_BLACK_BLOCK_POSE.x, GARDEN_BLACK_BLOCK_POSE.y,
-                                            -0.5f * std::numbers::pi};
-constexpr Pose WAREHOUSE_B_EXIT_POSE{WAREHOUSE_B_POSE.x, WAREHOUSE_B_POSE.y, 0.5f * std::numbers::pi};
-constexpr Pose GARDEN_WHITE_BLOCK_EXIT_POSE{GARDEN_WHITE_BLOCK_POSE.x, GARDEN_WHITE_BLOCK_POSE.y,
-                                            -0.5f * std::numbers::pi};
 
 // コントロールモード一覧
 enum class AutoControlMode {
   EMERGENCY_STOP,
   MANUAL,
-  START_TO_C,
-  GET_BLOCK_AND_WATERING_CAN,
-  C_TO_GARDEN,
-  PUT_BLACK_BLOCK,
-  /// 自動機がBの白ブロックを２個回収するかも、ということで書いておいた　使わないかも
-  GARDEN_TO_B,
-  GET_WHITE_BLOCK,
-  B_TO_GARDEN,
-  PUT_WHITE_BLOCK,
-  ///
-  WAIT_FOR_WATERING,
-  GARDEN_TO_C_WARTERING,
-  C_TO_GARDEN_WARTERING,
-  GARDEN_TO_A_WARTERING,
-  A_TO_GARDEN_WARTERING,
 };
 
 Pose robot_pose = R2_START_POSE;
@@ -184,17 +165,17 @@ extern "C" void app_main() {
   motor1_encoder.start();
   motor2_encoder.start();
   motor3_encoder.start();
-  motor4_encoder.start();
+  // motor4_encoder.start();
 
   motor1.start();
   motor2.start();
   motor3.start();
-  motor4.start();
+  // motor4.start();
 
   imu.start();
 
-  block_holder_servo.start();
-  watering_can_servo.start();
+  // block_holder_servo.start();
+  // watering_can_servo.start();
 
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
@@ -204,13 +185,13 @@ extern "C" void app_main() {
       imu_yaw = std::get<0>(*euler);
     }
 
-    block_holder_servo.update();
-    watering_can_servo.update();
+    // block_holder_servo.update();
+    // watering_can_servo.update();
 
     // printf("x: %f, y: %f, yaw: %f, block_pos: %f, watering_pos: %f\n\r", debug_pose_x.load(), debug_pose_y.load(),
     //        debug_pose_yaw.load(), block_holder_servo.get_position(), watering_can_servo.get_position());
-    printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
-    printf("yaw %f\n\r", debug_pose_yaw.load());
+    // printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
+    // printf("yaw %f\n\r", debug_pose_yaw.load());
     halx::core::delay(10);
   }
 }
@@ -219,7 +200,7 @@ void timer_callback(void *) {
   motor1_encoder.update();
   motor2_encoder.update();
   motor3_encoder.update();
-  motor4_encoder.update();
+  // motor4_encoder.update();
   ps3.update();
 
   if (ps3.get_key_down(PS3Key::SELECT)) {
@@ -243,7 +224,6 @@ void timer_callback(void *) {
       // block_holder_servo.set_position(BLOCK_HOLDER_OPEN_POSITION);
       // watering_can_servo.set_position(WATERING_CAN_RELEASE_POSITION);
       stop_drive_wheels();
-      set_auto_control_mode(AutoControlMode::START_TO_C);
       break;
     }
     // メモ　デバッグするときは下のコメントアウトを外してset_auto_control_modeをコメントアウトする
@@ -273,157 +253,80 @@ void timer_callback(void *) {
     drive_wheels(velocity);
     break;
   }
-  // move_to_pose(行く場所, 次の動作)
-  // move_servo(動かすサーボ, set_position)
-  case AutoControlMode::START_TO_C:
-    move_to_pose(WAREHOUSE_C_POSE, AutoControlMode::GET_BLOCK_AND_WATERING_CAN);
-    break;
+  }
+    // move_to_pose(行く場所, 次の動作)
+    // move_servo(動かすサーボ, set_position)
 
-  case AutoControlMode::GET_BLOCK_AND_WATERING_CAN:
-    collect_block_and_watering_can();
-    // 場所が無かったからここにCに行く動作を書いた
-    move_to_pose(WAREHOUSE_C_EXIT_POSE, AutoControlMode::C_TO_GARDEN);
-    break;
-
-  case AutoControlMode::C_TO_GARDEN:
-    move_to_pose(GARDEN_BLACK_BLOCK_POSE, AutoControlMode::PUT_BLACK_BLOCK);
-    break;
-
-  case AutoControlMode::PUT_BLACK_BLOCK:
-
-    move_servo(block_holder_servo, BLOCK_HOLDER_OPEN_POSITION);
-    move_to_pose(GARDEN_BLACK_BLOCK_EXIT_POSE, AutoControlMode::GARDEN_TO_B);
-    break;
-
-  case AutoControlMode::GARDEN_TO_B:
-    move_to_pose(WAREHOUSE_B_POSE, AutoControlMode::GET_WHITE_BLOCK);
-    break;
-
-  case AutoControlMode::GET_WHITE_BLOCK:
-    move_servo(block_holder_servo, BLOCK_HOLDER_CLOSED_POSITION);
-    move_to_pose(WAREHOUSE_B_EXIT_POSE, AutoControlMode::B_TO_GARDEN);
-    break;
-
-  case AutoControlMode::B_TO_GARDEN:
-    move_to_pose(GARDEN_WHITE_BLOCK_POSE, AutoControlMode::PUT_WHITE_BLOCK);
-    break;
-
-  case AutoControlMode::PUT_WHITE_BLOCK:
-    move_servo(block_holder_servo, BLOCK_HOLDER_OPEN_POSITION);
-
-    move_to_pose(GARDEN_WHITE_BLOCK_EXIT_POSE, AutoControlMode::WAIT_FOR_WATERING);
-    break;
-
-  case AutoControlMode::WAIT_FOR_WATERING:
-    waiting_ticks = waiting_ticks + 1;
-    // 邪魔だったら待機場所を設定してもいいかも
-    stop_drive_wheels();
-    if (waiting_ticks >= WATERING_START_TICKS) {
-      set_auto_control_mode(AutoControlMode::GARDEN_TO_C_WARTERING);
+    if (competition_running) {
+      ++competition_ticks;
     }
-    break;
-
-  case AutoControlMode::GARDEN_TO_C_WARTERING:
-    move_to_pose(WAREHOUSE_C_POSE, AutoControlMode::C_TO_GARDEN_WARTERING);
-    break;
-
-  case AutoControlMode::C_TO_GARDEN_WARTERING:
-    move_to_pose(GARDEN_WATERING_POSE, AutoControlMode::GARDEN_TO_A_WARTERING);
-    break;
-
-  case AutoControlMode::GARDEN_TO_A_WARTERING:
-    move_to_pose(WAREHOUSE_A_POSE, AutoControlMode::A_TO_GARDEN_WARTERING);
-    break;
-
-  case AutoControlMode::A_TO_GARDEN_WARTERING:
-    move_to_pose(GARDEN_WATERING_POSE, AutoControlMode::GARDEN_TO_C_WARTERING);
-    break;
+    debug_pose_x = robot_pose.x;
+    debug_pose_y = robot_pose.y;
+    debug_pose_yaw = robot_pose.yaw;
   }
 
-  if (competition_running) {
-    ++competition_ticks;
-  }
-  debug_pose_x = robot_pose.x;
-  debug_pose_y = robot_pose.y;
-  debug_pose_yaw = robot_pose.yaw;
-}
+  void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
 
-void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
-
-void move_to_pose(const Pose &target_pose, AutoControlMode next_mode) {
-  const float delta_x = target_pose.x - robot_pose.x;
-  const float delta_y = target_pose.y - robot_pose.y;
-  const float delta_yaw = std::remainder(target_pose.yaw - robot_pose.yaw, 2.0f * std::numbers::pi);
-  constexpr float POSITION_TOLERANCE_SQUARED = SEQUENCE_POSITION_TOLERANCE * SEQUENCE_POSITION_TOLERANCE;
-
-  if (delta_x * delta_x + delta_y * delta_y <= POSITION_TOLERANCE_SQUARED &&
-      std::abs(delta_yaw) <= SEQUENCE_YAW_TOLERANCE) {
+  void move_servo(FeetechPositionControl & servo, float target_position) {
     stop_drive_wheels();
-    set_auto_control_mode(next_mode);
-    return;
+    servo.set_position(target_position);
   }
 
-  drive_wheels(calculate_velocity(robot_pose, target_pose));
-}
+  void collect_block_and_watering_can() { // ブロックとじょうろが同時に取れる前提で書いた
+    stop_drive_wheels();
+    block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
+    watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
+  }
 
-void move_servo(FeetechPositionControl &servo, float target_position) {
-  stop_drive_wheels();
-  servo.set_position(target_position);
-}
+  Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
+    static PIDController p2p_x_pid(P2P_X_PID_PARAMS, CONTROL_DT);
+    static PIDController p2p_y_pid(P2P_Y_PID_PARAMS, CONTROL_DT);
+    static PIDController p2p_yaw_pid(P2P_YAW_PID_PARAMS, CONTROL_DT);
 
-void collect_block_and_watering_can() { // ブロックとじょうろが同時に取れる前提で書いた
-  stop_drive_wheels();
-  block_holder_servo.set_position(BLOCK_HOLDER_CLOSED_POSITION);
-  watering_can_servo.set_position(WATERING_CAN_COLLECT_POSITION);
-}
+    Velocity world_velocity;
+    world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
+    world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
+    const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
+    world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
 
-Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
-  static PIDController p2p_x_pid(P2P_X_PID_PARAMS, CONTROL_DT);
-  static PIDController p2p_y_pid(P2P_Y_PID_PARAMS, CONTROL_DT);
-  static PIDController p2p_yaw_pid(P2P_YAW_PID_PARAMS, CONTROL_DT);
+    Velocity robot_velocity;
+    robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
+    robot_velocity.y = world_velocity.y * std::cos(now_pose.yaw) - world_velocity.x * std::sin(now_pose.yaw);
+    robot_velocity.yaw = world_velocity.yaw;
 
-  Velocity world_velocity;
-  world_velocity.x = p2p_x_pid.solve(target_pose.x - now_pose.x);
-  world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
-  const float yaw_error = std::remainder(target_pose.yaw - now_pose.yaw, 2.0f * std::numbers::pi);
-  world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
+    return robot_velocity;
+  }
 
-  Velocity robot_velocity;
-  robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
-  robot_velocity.y = world_velocity.y * std::cos(now_pose.yaw) - world_velocity.x * std::sin(now_pose.yaw);
-  robot_velocity.yaw = world_velocity.yaw;
+  void drive_wheels(const Velocity &velocity) {
+    constexpr float VEL2RPS = 1.0f / (2.0f * std::numbers::pi * DRIVE_WHEEL_RADIUS);
 
-  return robot_velocity;
-}
+    float motor1_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_1) +
+                               velocity.y * std::cos(DRIVE_WHEEL_THETA_1) + ROBOT_RADIUS * velocity.yaw) *
+                              VEL2RPS;
+    float motor2_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_2) +
+                               velocity.y * std::cos(DRIVE_WHEEL_THETA_2) + ROBOT_RADIUS * velocity.yaw) *
+                              VEL2RPS;
+    float motor3_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_3) +
+                               velocity.y * std::cos(DRIVE_WHEEL_THETA_3) + ROBOT_RADIUS * velocity.yaw) *
+                              VEL2RPS;
 
-void drive_wheels(const Velocity &velocity) {
-  static PIDController motor1_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-  static PIDController motor2_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-  static PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+    motor2_target_rps = -motor2_target_rps;
+    motor3_target_rps = -motor3_target_rps;
 
-  constexpr float VEL2RPS = 1.0f / (2.0f * std::numbers::pi * DRIVE_WHEEL_RADIUS);
+    float motor1_output = motor1_pid.solve(motor1_target_rps - get_motor1_feedback_rps());
+    float motor2_output = motor2_pid.solve(motor2_target_rps - get_motor2_feedback_rps());
+    float motor3_output = motor3_pid.solve(motor3_target_rps - get_motor3_feedback_rps());
 
-  float motor1_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_1) + velocity.y * std::cos(DRIVE_WHEEL_THETA_1) +
-                             ROBOT_RADIUS * velocity.yaw) *
-                            VEL2RPS;
-  float motor2_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_2) + velocity.y * std::cos(DRIVE_WHEEL_THETA_2) +
-                             ROBOT_RADIUS * velocity.yaw) *
-                            VEL2RPS;
-  float motor3_target_rps = (-velocity.x * std::sin(DRIVE_WHEEL_THETA_3) + velocity.y * std::cos(DRIVE_WHEEL_THETA_3) +
-                             ROBOT_RADIUS * velocity.yaw) *
-                            VEL2RPS;
+    motor1.set_output(motor1_output);
+    motor2.set_output(motor2_output);
+    motor3.set_output(motor3_output);
+  }
 
-  float motor1_output = motor1_pid.solve(motor1_target_rps - motor1_encoder.get_rps());
-  float motor2_output = motor2_pid.solve(motor2_target_rps - motor2_encoder.get_rps());
-  float motor3_output = motor3_pid.solve(motor3_target_rps - (-motor3_encoder.get_rps()));
-
-  motor1.set_output(motor1_output);
-  motor2.set_output(motor2_output);
-  motor3.set_output(motor3_output);
-}
-
-void stop_drive_wheels() {
-  motor1.set_output(0.0f);
-  motor2.set_output(0.0f);
-  motor3.set_output(0.0f);
-}
+  void stop_drive_wheels() {
+    motor1_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+    motor2_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+    motor3_pid = PIDController(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+    motor1.set_output(0.0f);
+    motor2.set_output(0.0f);
+    motor3.set_output(0.0f);
+  }
