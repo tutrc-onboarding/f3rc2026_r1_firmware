@@ -304,13 +304,14 @@ Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
   world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
   const float yaw_error = std::remainder(-target_pose.yaw + now_pose.yaw, 2.0f * std::numbers::pi);
   // world_velocity.yaw = std::abs(yaw_error) <= SEQUENCE_YAW_TOLERANCE ? 0.0f : p2p_yaw_pid.solve(yaw_error);
-  if (std::abs(yaw_error < SEQUENCE_YAW_TOLERANCE)) {
+  if (std::abs(yaw_error <= SEQUENCE_YAW_TOLERANCE)) {
     world_velocity.yaw = 0.0f;
 
   } else {
     world_velocity.yaw = p2p_yaw_pid.solve(yaw_error);
   }
-  debug_world_velocity_yaw = world_velocity.yaw;
+
+    debug_world_velocity_yaw = world_velocity.yaw;
 
   Velocity robot_velocity;
   robot_velocity.x = world_velocity.x * std::cos(now_pose.yaw) + world_velocity.y * std::sin(now_pose.yaw);
