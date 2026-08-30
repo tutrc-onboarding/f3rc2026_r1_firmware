@@ -152,14 +152,9 @@ enum class AutoControlMode {
 };
 
 enum class ServorProf {
-  HOLD_BLOCK,
-  RELEASE_BLOCK,
-  HOLD_PLANT,
-  RELEASE_PLANT,
-  BLOCK_PUTTER_COLOSE,
-  BLOCK_PUTTER_OPEN,
-  RAIL_REVO_UP,
-  RAIL_REVO_DOWN,
+  PLANT_HOLD,
+  PLANT_RELEASE,
+
 };
 
 Pose robot_pose = R2_START_POSE;
@@ -236,7 +231,7 @@ extern "C" void app_main() {
     // printf("x: %f, y: %f, yaw: %f, block_pos: %f, watering_pos: %f\n\r", debug_pose_x.load(), debug_pose_y.load(),
     //        debug_pose_yaw.load(), block_holder_servo.get_position(), watering_can_servo.get_position());
     // printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
-    printf("yaw %f\n\r", debug_pose_yaw.load());
+    // printf("yaw %f\n\r", debug_pose_yaw.load());
     // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
     halx::core::delay(10);
