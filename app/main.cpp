@@ -84,7 +84,7 @@ Encoder<&htim5> motor2_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim4> motor3_encoder(2048, 2.0f, CONTROL_DT);
 // Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
 
-// 実機検証結果: motor2はencoder3、motor3は反転したencoder2を使用する。
+// otor2はencoder3、motor3は反転したencoder2を使用する。
 float get_motor1_feedback_rps() { return motor1_encoder.get_rps(); }
 float get_motor2_feedback_rps() { return motor3_encoder.get_rps(); }
 float get_motor3_feedback_rps() { return -motor2_encoder.get_rps(); }
@@ -101,17 +101,12 @@ PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
 
-constexpr int BLOCK_HOLDER_OPEN_POSITION = 521;
-constexpr int BLOCK_HOLDER_CLOSED_POSITION = 2028;
-constexpr int WATERING_CAN_RELEASE_POSITION = 1015;
-constexpr int WATERING_CAN_COLLECT_POSITION = 1560;
-
-FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2250); // 2250-3236
-FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 542);  // 542-1680
-FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 523);  // 523-4000
-FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 1123); // 1123-3261
-FeetechPositionControl RAIL_REVO_2(uart5, 2, 525);     // 525-3272
-FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 579);  // 579-3022
+FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2834); // 2250-3236
+FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 949);  // 542-1680
+FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 4095); // 523-4000
+FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 3261); // 1123-3261
+FeetechPositionControl RAIL_REVO_2(uart5, 2, 2047);    // 525-3272
+FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 3242); // 579-3022
 
 std::atomic<float> imu_yaw = 0.0f;
 std::atomic<float> debug_world_velocity_yaw = 0.0f;
@@ -156,7 +151,7 @@ enum class AutoControlMode {
   MANUAL,
 };
 
-enum class ActuaterProf {
+enum class ServorProf {
   HOLD_BLOCK,
   RELEASE_BLOCK,
   HOLD_PLANT,
@@ -184,8 +179,11 @@ extern "C" void app_main() {
   halx::driver::enable_stdout(lpuart1);
 
   uart4.start();
-  uart5.start();
   lpuart1.start();
+
+  printf("starting uart5...\r\n");
+  const bool uart5_started = uart5.start();
+  printf("uart5.start(): %s\r\n", uart5_started ? "OK" : "FAILED");
 
   motor1_encoder.start();
   motor2_encoder.start();
@@ -198,9 +196,29 @@ extern "C" void app_main() {
   // motor4.start();
 
   imu.start();
+  printf("ping servo ID 1...\r\n");
+  BLOCK_PUTTER_1.start();
+  printf("ping servo ID 1 OK\r\n");
 
+  printf("ping servo ID 2...\r\n");
+  RAIL_REVO_2.start();
+  printf("ping servo ID 2 OK\r\n");
+
+  printf("ping servo ID 3...\r\n");
+  PLANT_HOLDER_3.start();
+  printf("ping servo ID 3 OK\r\n");
+
+  printf("ping servo ID 4...\r\n");
+  BLOCK_LIFTER_4.start();
+  printf("ping servo ID 4 OK\r\n");
+
+  printf("ping servo ID 5...\r\n");
+  BLOCK_HOLDER_5.start();
+  printf("ping servo ID 5 OK\r\n");
+
+  printf("ping servo ID 6...\r\n");
   BLOCK_HOLDER_6.start();
-
+  printf("ping servo ID 6 OK\r\n");
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
 
@@ -208,16 +226,19 @@ extern "C" void app_main() {
     if (auto euler = imu.get_euler()) {
       imu_yaw = std::get<0>(*euler);
     }
-
-    // block_holder_servo.update();
-    // watering_can_servo.update();
+    BLOCK_HOLDER_6.update();
+    BLOCK_HOLDER_5.update();
+    BLOCK_LIFTER_4.update();
+    PLANT_HOLDER_3.update();
+    RAIL_REVO_2.update();
+    BLOCK_PUTTER_1.update();
 
     // printf("x: %f, y: %f, yaw: %f, block_pos: %f, watering_pos: %f\n\r", debug_pose_x.load(), debug_pose_y.load(),
     //        debug_pose_yaw.load(), block_holder_servo.get_position(), watering_can_servo.get_position());
     // printf("block_holder_pos %d\n\r", static_cast<int>(block_holder_servo.get_position()));
-    // printf("yaw %f\n\r", debug_pose_yaw.load());
-    printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
-           debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
+    printf("yaw %f\n\r", debug_pose_yaw.load());
+    // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
+    //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
     halx::core::delay(10);
   }
 }
@@ -229,7 +250,7 @@ void timer_callback(void *) {
   // motor4_encoder.update();
   ps3.update();
 
-  BLOCK_HOLDER_6.update();
+  // BLOCK_HOLDER_6.update();
 
   update_localization();
 
@@ -270,19 +291,19 @@ void timer_callback(void *) {
     if (ps3.get_key_down(PS3Key::DOWN)) {
       target_yaw = ushiro_theta;
     }
-    if (ps3.get_key(PS3Key::R2)) {
-      BLOCK_HOLDER_6.set_position(2250);
-    }
-    if (ps3.get_key(PS3Key::L2)) {
-      BLOCK_HOLDER_6.set_position(3236);
-    }
+    // if (ps3.get_key(PS3Key::R2)) {
+    //   BLOCK_HOLDER_6.set_position(2020);
+    // }
+    // if (ps3.get_key(PS3Key::L2)) {
+    //   BLOCK_HOLDER_6.set_position(3036);
+    // }
 
     // IMUのyaw角から旋回補正を作る。旋回成分は3輪すべてに加算されるため、
     // 前後・左右・斜めのどの並進方向でもtarget_yawを保って直進する。
     const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
-    velocity.x = -0.5f * ps3.get_axis(PS3Axis::LEFT_X);
-    velocity.y = 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
+    velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+    velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
     if (velocity.x == 0.0f && velocity.y == 0.0f && velocity.yaw == 0.0f) {
       stop_drive_wheels();
     } else {
@@ -321,7 +342,7 @@ Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose) {
   world_velocity.y = p2p_y_pid.solve(target_pose.y - now_pose.y);
   const float yaw_error = std::remainder(-target_pose.yaw + now_pose.yaw, 2.0f * std::numbers::pi);
   // world_velocity.yaw = std::abs(yaw_error) <= SEQUENCE_YAW_TOLERANCE ? 0.0f : p2p_yaw_pid.solve(yaw_error);
-  if (std::abs(yaw_error <= SEQUENCE_YAW_TOLERANCE)) {
+  if (std::abs(yaw_error) <= SEQUENCE_YAW_TOLERANCE) {
     world_velocity.yaw = 0.0f;
 
   } else {
