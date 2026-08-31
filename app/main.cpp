@@ -54,6 +54,24 @@ constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
     .integral_upper_limit = 1.0f,
 };
 
+// motor4で駆動するベルト直動機構の速度PI制御。
+constexpr PIDParameters BELT_VELOCITY_PI_PARAMS{
+    .kp = 0.01f,
+    .ki = 0.7f,
+    .kd = 0.0f,
+    .output_upper_limit = 0.6f,
+    .integral_upper_limit = 1.0f,
+};
+
+constexpr float BELT_MAX_TARGET_RPS = 2.0f;
+constexpr float BELT_STICK_DEAD_ZONE = 0.08f;
+// encoder4の起動位置を0回転とする。電源投入時に機構を最小位置へ合わせ、
+// 実機のストロークに合わせて最大位置を調整すること。
+constexpr float BELT_MIN_POSITION_REV = 0.0f;
+constexpr float BELT_MAX_POSITION_REV = 5.0f;
+
+static_assert(BELT_MIN_POSITION_REV < BELT_MAX_POSITION_REV);
+
 constexpr PIDParameters P2P_X_PID_PARAMS{
     .kp = 1.0f,
     .output_upper_limit = 0.3f,
@@ -78,12 +96,12 @@ UART_DMA<&huart5> uart5(uart5_tx_buf, sizeof(uart5_tx_buf), uart5_rx_buf, sizeof
 GPIO motor1_pin(Motor8_GPIO_Port, Motor8_Pin);
 GPIO motor2_pin(Motor5_GPIO_Port, Motor5_Pin);
 GPIO motor3_pin(Motor4_GPIO_Port, Motor4_Pin);
-// GPIO motor4_pin(Motor3_GPIO_Port, Motor3_Pin);
+GPIO motor4_pin(Motor3_GPIO_Port, Motor3_Pin);
 
 Encoder<&htim8> motor1_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim5> motor2_encoder(2048, 2.0f, CONTROL_DT);
 Encoder<&htim4> motor3_encoder(2048, 2.0f, CONTROL_DT);
-// Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
+Encoder<&htim1> motor4_encoder(2048, 1.0f, CONTROL_DT);
 
 // otor2はencoder3、motor3は反転したencoder2を使用する。
 float get_motor1_feedback_rps() { return motor1_encoder.get_rps(); }
@@ -93,11 +111,12 @@ float get_motor3_feedback_rps() { return -motor2_encoder.get_rps(); }
 Motor<&htim15> motor1(TIM_CHANNEL_1, motor1_pin);
 Motor<&htim20> motor2(TIM_CHANNEL_2, motor2_pin);
 Motor<&htim20> motor3(TIM_CHANNEL_1, motor3_pin);
-// Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
+Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
 
 PIDController motor1_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PIDController motor2_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
+PIDController belt_velocity_pi(BELT_VELOCITY_PI_PARAMS, CONTROL_DT);
 
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
@@ -105,12 +124,12 @@ BNO055<&hi2c3> imu;
 constexpr int SERVO2_ARM_RAISED_POSITION = 3010;
 constexpr int SERVO2_ARM_LOWERED_POSITION = 868;
 
-FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2834); // 2250-3236
-FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 949);  // 542-1680
-FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 4095); // 523-4000
-FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 3261); // 1123-3261
+FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2834);                     // 2250-3236
+FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 949);                      // 542-1680
+FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 4095);                     // 523-4000
+FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 3261);                     // 1123-3261
 FeetechPositionControl RAIL_REVO_2(uart5, 2, SERVO2_ARM_LOWERED_POSITION); // 525-3272
-FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 3242); // 579-3022
+FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 3242);                     // 579-3022
 
 std::atomic<float> imu_yaw = 0.0f;
 std::atomic<float> debug_world_velocity_yaw = 0.0f;
@@ -118,6 +137,8 @@ std::atomic<float> debug_world_velocity_yaw = 0.0f;
 std::atomic<float> debug_pose_x = 0.0f;
 std::atomic<float> debug_pose_y = 0.0f;
 std::atomic<float> debug_pose_yaw = 0.0f;
+std::atomic<float> debug_belt_position = 0.0f;
+std::atomic<float> debug_belt_velocity = 0.0f;
 
 struct Velocity {
   float x;   // [m/s]
@@ -175,12 +196,12 @@ struct Position {
 };
 
 constexpr Position servo_pos[] = {
-    {3242, 2264}, // S1
+    {3242, 2264},                                              // S1
     {SERVO2_ARM_RAISED_POSITION, SERVO2_ARM_LOWERED_POSITION}, // S2
-    {3261, 1858}, // S3
-    {0, 4095},    // S4
-    {949, 1681},  // S5
-    {2834, 2102}, // S6
+    {3261, 1858},                                              // S3
+    {0, 4095},                                                 // S4
+    {949, 1681},                                               // S5
+    {2834, 2102},                                              // S6
 };
 
 constexpr int servo1_plant_close = 1017;
@@ -218,6 +239,10 @@ void move_to_pose(const Pose &target_pose, AutoControlMode next_mode);
 void move_servo(FeetechPositionControl &servo, float target_position);
 void collect_block_and_watering_can();
 void set_mecha_command(MechaCommand command);
+void belt_vel_pid(float target_vel, float now_vel);
+void stop_belt();
+void control_belt_manually();
+
 extern "C" void app_main() {
   halx::driver::enable_stdout(lpuart1);
 
@@ -231,12 +256,12 @@ extern "C" void app_main() {
   motor1_encoder.start();
   motor2_encoder.start();
   motor3_encoder.start();
-  // motor4_encoder.start();
+  motor4_encoder.start();
 
   motor1.start();
   motor2.start();
   motor3.start();
-  // motor4.start();
+  motor4.start();
 
   imu.start();
   printf("ping servo ID 1...\r\n");
@@ -273,6 +298,7 @@ extern "C" void app_main() {
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
 
+  uint32_t belt_debug_print_count = 0;
   while (true) {
     if (auto euler = imu.get_euler()) {
       imu_yaw = std::get<0>(*euler);
@@ -290,6 +316,12 @@ extern "C" void app_main() {
     // printf("yaw %f\n\r", debug_pose_yaw.load());
     // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
+    if (++belt_debug_print_count >= 10) {
+      belt_debug_print_count = 0;
+      printf("encoder4 position: %.4f rev, velocity: %.4f rps, encorder3: %.4f rev, %.4f\r\n",
+             motor4_encoder.get_position(), motor4_encoder.get_rps(), motor3_encoder.get_position(),
+             motor3_encoder.get_rps());
+    }
     halx::core::delay(10);
   }
 }
@@ -298,7 +330,9 @@ void timer_callback(void *) {
   motor1_encoder.update();
   motor2_encoder.update();
   motor3_encoder.update();
-  // motor4_encoder.update();
+  motor4_encoder.update();
+  debug_belt_position = motor4_encoder.get_position();
+  debug_belt_velocity = motor4_encoder.get_rps();
   ps3.update();
 
   // BLOCK_HOLDER_6.update();
@@ -313,12 +347,15 @@ void timer_callback(void *) {
   switch (auto_control_mode) {
   case AutoControlMode::EMERGENCY_STOP:
     stop_drive_wheels();
+    stop_belt();
     if (ps3.get_key(PS3Key::L1) && ps3.get_key(PS3Key::R1)) {
       set_auto_control_mode(AutoControlMode::MANUAL);
     }
     break;
 
   case AutoControlMode::MANUAL: {
+
+    control_belt_manually();
 
     if (ps3.get_key_down(PS3Key::START)) {
       robot_pose = R2_START_POSE;
@@ -444,16 +481,16 @@ void timer_callback(void *) {
     }
     break;
   }
-}
-// move_to_pose(行く場所, 次の動作)
-// move_servo(動かすサーボ, set_position)
+  }
+  // move_to_pose(行く場所, 次の動作)
+  // move_servo(動かすサーボ, set_position)
 
-if (competition_running) {
-  ++competition_ticks;
-}
-debug_pose_x = robot_pose.x;
-debug_pose_y = robot_pose.y;
-debug_pose_yaw = robot_pose.yaw;
+  if (competition_running) {
+    ++competition_ticks;
+  }
+  debug_pose_x = robot_pose.x;
+  debug_pose_y = robot_pose.y;
+  debug_pose_yaw = robot_pose.yaw;
 }
 
 void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
@@ -525,4 +562,40 @@ void stop_drive_wheels() {
   motor1.set_output(0.0f);
   motor2.set_output(0.0f);
   motor3.set_output(0.0f);
+}
+
+void belt_vel_pid(float target_vel, float now_vel) {
+  const float motor_output = belt_velocity_pi.solve(target_vel - now_vel);
+  motor4.set_output(motor_output);
+}
+
+void stop_belt() {
+  belt_velocity_pi = PIDController(BELT_VELOCITY_PI_PARAMS, CONTROL_DT);
+  motor4.set_output(0.0f);
+}
+
+void control_belt_manually() {
+  if (!ps3.get_key(PS3Key::R1)) {
+    stop_belt();
+    return;
+  }
+
+  // PS3のY軸は上方向が負なので、上へ倒したときに正速度となるよう反転する。
+  float stick_y = -ps3.get_axis(PS3Axis::RIGHT_Y);
+  if (std::abs(stick_y) <= BELT_STICK_DEAD_ZONE) {
+    stop_belt();
+    return;
+  }
+
+  const float target_vel = BELT_MAX_TARGET_RPS * stick_y;
+  const float now_pos = motor4_encoder.get_position();
+  const bool moving_beyond_max = now_pos >= BELT_MAX_POSITION_REV && target_vel > 0.0f;
+  const bool moving_beyond_min = now_pos <= BELT_MIN_POSITION_REV && target_vel < 0.0f;
+  if (moving_beyond_max || moving_beyond_min) {
+    stop_belt();
+    return;
+  }
+
+  const float now_vel = motor4_encoder.get_rps();
+  belt_vel_pid(target_vel, now_vel);
 }
