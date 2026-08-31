@@ -53,24 +53,9 @@ constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
     .output_upper_limit = 0.6f,
     .integral_upper_limit = 1.0f,
 };
-
-// motor4で駆動するベルト直動機構の速度PI制御。
-constexpr PIDParameters BELT_VELOCITY_PI_PARAMS{
-    .kp = 0.01f,
-    .ki = 0.7f,
-    .kd = 0.0f,
-    .output_upper_limit = 0.6f,
-    .integral_upper_limit = 1.0f,
-};
-
-constexpr float BELT_MAX_TARGET_RPS = 2.0f;
-constexpr float BELT_STICK_DEAD_ZONE = 0.08f;
-// encoder4の起動位置を0回転とする。電源投入時に機構を最小位置へ合わせ、
-// 実機のストロークに合わせて最大位置を調整すること。
-constexpr float BELT_MIN_POSITION_REV = 0.0f;
-constexpr float BELT_MAX_POSITION_REV = 5.0f;
-
-static_assert(BELT_MIN_POSITION_REV < BELT_MAX_POSITION_REV);
+constexpr float MOTOR4_VELOCITY_KP = 0.1f;
+constexpr float MOTOR4_TARGET_RPS_SCALE = 2.0f;
+constexpr float MOTOR4_STICK_DEAD_ZONE = 0.08f;
 
 constexpr PIDParameters P2P_X_PID_PARAMS{
     .kp = 1.0f,
@@ -116,7 +101,6 @@ Motor<&htim3> motor4(TIM_CHANNEL_4, motor4_pin);
 PIDController motor1_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PIDController motor2_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
-PIDController belt_velocity_pi(BELT_VELOCITY_PI_PARAMS, CONTROL_DT);
 
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
@@ -206,7 +190,7 @@ constexpr Position servo_pos[] = {
 
 constexpr int servo1_plant_close = 1017;
 constexpr int servo1_block_close = 2264;
-
+float i = 0;
 enum class ArmHandState {
   OPEN,
   BLOCK_CLOSED,
@@ -239,9 +223,8 @@ void move_to_pose(const Pose &target_pose, AutoControlMode next_mode);
 void move_servo(FeetechPositionControl &servo, float target_position);
 void collect_block_and_watering_can();
 void set_mecha_command(MechaCommand command);
-void belt_vel_pid(float target_vel, float now_vel);
-void stop_belt();
-void control_belt_manually();
+void stop_motor4();
+void control_motor4_manually();
 
 extern "C" void app_main() {
   halx::driver::enable_stdout(lpuart1);
@@ -316,11 +299,9 @@ extern "C" void app_main() {
     // printf("yaw %f\n\r", debug_pose_yaw.load());
     // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
-    if (++belt_debug_print_count >= 10) {
-      belt_debug_print_count = 0;
-      printf("encoder4 position: %.4f rev, velocity: %.4f rps\r\n", motor4_encoder.get_position(),
-             motor4_encoder.get_rps());
-    }
+
+    printf("encoder4 position: %.4f rev, velocity: %.4f rps\r\n", motor4_encoder.get_position(),
+           motor4_encoder.get_rps());
     halx::core::delay(10);
   }
 }
@@ -346,7 +327,7 @@ void timer_callback(void *) {
   switch (auto_control_mode) {
   case AutoControlMode::EMERGENCY_STOP:
     stop_drive_wheels();
-    stop_belt();
+    stop_motor4();
     if (ps3.get_key(PS3Key::L1) && ps3.get_key(PS3Key::R1)) {
       set_auto_control_mode(AutoControlMode::MANUAL);
     }
@@ -354,7 +335,7 @@ void timer_callback(void *) {
 
   case AutoControlMode::MANUAL: {
 
-    control_belt_manually();
+    control_motor4_manually();
 
     if (ps3.get_key_down(PS3Key::START)) {
       robot_pose = R2_START_POSE;
@@ -419,12 +400,11 @@ void timer_callback(void *) {
     case MechaCommand::BLOCK_HOLD_AND_LIFT_UP: {
       BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].close);
       BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].close);
-      if ((BLOCK_HOLDER_5.get_position() == servo_pos[5 - 1].close) &&
-          (BLOCK_HOLDER_6.get_position() == servo_pos[6 - 1].close)) {
-
+      i = i + 1;
+      if (i == 10) {
         BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].close);
-      } else {
       }
+
       break;
     }
     case MechaCommand::F_BLOCK_RELEASE: {
@@ -467,8 +447,13 @@ void timer_callback(void *) {
       break;
     }
     }
-    target_yaw = std::remainder(target_yaw + MANUAL_TARGET_YAW_RATE * ps3.get_axis(PS3Axis::RIGHT_X) * CONTROL_DT,
-                                2.0f * std::numbers::pi);
+    if (!ps3.get_key(PS3Key::R1)) {
+      target_yaw = std::remainder(target_yaw + MANUAL_TARGET_YAW_RATE * ps3.get_axis(PS3Axis::RIGHT_X) * CONTROL_DT,
+                                  2.0f * std::numbers::pi);
+    } else {
+      // R1押下中は右スティックの横方向入力をなしにした
+      target_yaw = robot_pose.yaw;
+    }
     const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
@@ -563,38 +548,21 @@ void stop_drive_wheels() {
   motor3.set_output(0.0f);
 }
 
-void belt_vel_pid(float target_vel, float now_vel) {
-  const float motor_output = belt_velocity_pi.solve(target_vel - now_vel);
-  motor4.set_output(motor_output);
-}
+void stop_motor4() { motor4.set_output(0.0f); }
 
-void stop_belt() {
-  belt_velocity_pi = PIDController(BELT_VELOCITY_PI_PARAMS, CONTROL_DT);
-  motor4.set_output(0.0f);
-}
-
-void control_belt_manually() {
+void control_motor4_manually() {
   if (!ps3.get_key(PS3Key::R1)) {
-    stop_belt();
+    stop_motor4();
     return;
   }
 
-  // PS3のY軸は上方向が負なので、上へ倒したときに正速度となるよう反転する。←めっちゃ嘘
-  float stick_y = -ps3.get_axis(PS3Axis::RIGHT_Y);
-  if (std::abs(stick_y) <= BELT_STICK_DEAD_ZONE) {
-    stop_belt();
+  const float stick_y = ps3.get_axis(PS3Axis::RIGHT_Y);
+  if (std::abs(stick_y) <= MOTOR4_STICK_DEAD_ZONE) {
+    stop_motor4();
     return;
   }
 
-  const float target_vel = BELT_MAX_TARGET_RPS * stick_y;
-  const float now_pos = motor4_encoder.get_position();
-  const bool moving_beyond_max = now_pos >= BELT_MAX_POSITION_REV && target_vel > 0.0f;
-  const bool moving_beyond_min = now_pos <= BELT_MIN_POSITION_REV && target_vel < 0.0f;
-  if (moving_beyond_max || moving_beyond_min) {
-    stop_belt();
-    return;
-  }
-
-  const float now_vel = motor4_encoder.get_rps();
-  belt_vel_pid(target_vel, now_vel);
+  const float target_rps = MOTOR4_TARGET_RPS_SCALE * stick_y;
+  const float velocity_error = target_rps - motor4_encoder.get_rps();
+  motor4.set_output(MOTOR4_VELOCITY_KP * velocity_error);
 }
