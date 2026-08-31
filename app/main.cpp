@@ -36,6 +36,7 @@ using halx::driver::UART_IT;
 using halx::peripheral::ST_TIM;
 
 constexpr float CONTROL_DT = 0.01f;
+constexpr float MANUAL_TARGET_YAW_RATE = std::numbers::pi / 2.0f; // [rad/s]
 
 constexpr float ROBOT_RADIUS = 0.177f;
 constexpr float DRIVE_WHEEL_RADIUS = 0.050f;
@@ -101,11 +102,14 @@ PIDController motor3_pid(DRIVE_WHEEL_PID_PARAMS, CONTROL_DT);
 PS3 ps3(uart4);
 BNO055<&hi2c3> imu;
 
+constexpr int SERVO2_ARM_RAISED_POSITION = 3010;
+constexpr int SERVO2_ARM_LOWERED_POSITION = 868;
+
 FeetechPositionControl BLOCK_HOLDER_6(uart5, 6, 2834); // 2250-3236
 FeetechPositionControl BLOCK_HOLDER_5(uart5, 5, 949);  // 542-1680
 FeetechPositionControl BLOCK_LIFTER_4(uart5, 4, 4095); // 523-4000
 FeetechPositionControl PLANT_HOLDER_3(uart5, 3, 3261); // 1123-3261
-FeetechPositionControl RAIL_REVO_2(uart5, 2, 2047);    // 525-3272
+FeetechPositionControl RAIL_REVO_2(uart5, 2, SERVO2_ARM_LOWERED_POSITION); // 525-3272
 FeetechPositionControl BLOCK_PUTTER_1(uart5, 1, 3242); // 579-3022
 
 std::atomic<float> imu_yaw = 0.0f;
@@ -126,7 +130,6 @@ struct Pose {
   float y;   // [m]
   float yaw; // [rad]
 };
-
 constexpr float SEQUENCE_POSITION_TOLERANCE = 0.05f; // [m]　許容誤差
 // 直進中は、この範囲を超えた向きずれをIMUで検出して旋回速度にフィードバックする。
 constexpr float SEQUENCE_YAW_TOLERANCE = 0.08f; // [rad] yawの許容誤差（約5度）
@@ -137,7 +140,7 @@ bool competition_running = false;               // 計測のトリガー的な
 
 // R2スタートゾーンの中心を原点、右を+x、上を+y
 constexpr Pose R2_START_POSE{0.0f, 0.0f, 0.5f * std::numbers::pi};
-
+float target_yaw = 0.0f;
 // 目標角度
 
 constexpr float mae_theta = 0.5f * std::numbers::pi;
@@ -151,23 +154,59 @@ enum class AutoControlMode {
   MANUAL,
 };
 
-enum class ServorProf {
-  PLANT_HOLD,
-  PLANT_RELEASE,
-  BLOCK_HOLD_AND_LIFT_UP,
-  F_BLOCK_RELEASE,
-  R_BLOCK_RELEASE,
-  BLOCK_LIFT_DOWN,
-  UP_ARM,
-  DOWN_ARM,
-  RISE_ARM,
-  CLOSE_ARM,
-  OPEN_ARM,
+enum class MechaCommand {
+  NONE,
+  PLANT_HOLD,             // プラント把持
+  PLANT_RELEASE,          // プラント解放
+  BLOCK_HOLD_AND_LIFT_UP, // ブロック全把持・上昇
+  F_BLOCK_RELEASE,        // 前方ブロックの解放
+  R_BLOCK_RELEASE,        // 後方ブロックの解放
+  BLOCK_LIFT_DOWN,        // 全ブロック下降
+  UP_ARM,                 // アーム上昇
+  DOWN_ARM,               // アーム下降
+  RISE_ARM,               // アームを起き上がらせる
+  CLOSE_ARM,              // アームを閉じる
+  OPEN_ARM,               // アームを開ける
 };
 
+struct Position {
+  int open;
+  int close;
+};
+
+constexpr Position servo_pos[] = {
+    {3242, 2264}, // S1
+    {SERVO2_ARM_RAISED_POSITION, SERVO2_ARM_LOWERED_POSITION}, // S2
+    {3261, 1858}, // S3
+    {0, 4095},    // S4
+    {949, 1681},  // S5
+    {2834, 2102}, // S6
+};
+
+constexpr int servo1_plant_close = 1017;
+constexpr int servo1_block_close = 2264;
+
+enum class ArmHandState {
+  OPEN,
+  BLOCK_CLOSED,
+  PLANT_CLOSED,
+};
+
+constexpr ArmHandState next_arm_hand_close_state(ArmHandState state) {
+  return state == ArmHandState::BLOCK_CLOSED ? ArmHandState::PLANT_CLOSED : ArmHandState::BLOCK_CLOSED;
+}
+
+static_assert(next_arm_hand_close_state(ArmHandState::OPEN) == ArmHandState::BLOCK_CLOSED);
+static_assert(next_arm_hand_close_state(ArmHandState::BLOCK_CLOSED) == ArmHandState::PLANT_CLOSED);
+
+ArmHandState arm_hand_state = ArmHandState::OPEN;
+
+std::atomic<float> circle_counter = 0.0f;
+
 Pose robot_pose = R2_START_POSE;
-float target_yaw = R2_START_POSE.yaw;
+
 AutoControlMode auto_control_mode = AutoControlMode::EMERGENCY_STOP;
+MechaCommand mecha_command = MechaCommand::NONE;
 
 void timer_callback(void *);
 void update_localization();
@@ -178,6 +217,7 @@ void set_auto_control_mode(AutoControlMode mode);
 void move_to_pose(const Pose &target_pose, AutoControlMode next_mode);
 void move_servo(FeetechPositionControl &servo, float target_position);
 void collect_block_and_watering_can();
+void set_mecha_command(MechaCommand command);
 extern "C" void app_main() {
   halx::driver::enable_stdout(lpuart1);
 
@@ -223,10 +263,13 @@ extern "C" void app_main() {
   BLOCK_HOLDER_6.start();
   printf("ping servo ID 6 OK\r\n");
 
-  const auto mae_theta = imu.get_euler();
-  constexpr auto migi_theta = static_cast<float>(mae_theta) + 0.5 * std::numbers::pi;
-  constexpr auto hidari_theta = 1.0f * std::numbers::pi;
-  constexpr auto ushiro_theta = 1.5f * std::numbers::pi;
+  const auto mae_theta = std::get<0>(*imu.get_euler());
+  const auto migi_theta = mae_theta + 0.5f * static_cast<float>(std::numbers::pi);
+  const auto hidari_theta = mae_theta + 1.5f * static_cast<float>(std::numbers::pi);
+  const auto ushiro_theta = mae_theta + 1.0f * static_cast<float>(std::numbers::pi);
+  target_yaw = mae_theta;
+  BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
+
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
 
@@ -276,6 +319,7 @@ void timer_callback(void *) {
     break;
 
   case AutoControlMode::MANUAL: {
+
     if (ps3.get_key_down(PS3Key::START)) {
       robot_pose = R2_START_POSE;
       target_yaw = R2_START_POSE.yaw;
@@ -286,28 +330,109 @@ void timer_callback(void *) {
       stop_drive_wheels();
       break;
     }
-    // メモ　デバッグするときは下のコメントアウトを外してset_auto_control_modeをコメントアウトする
-    if (ps3.get_key_down(PS3Key::LEFT)) {
-      target_yaw = hidari_theta;
+    if (ps3.get_key_down(PS3Key::CIRCLE)) {
+      circle_counter = circle_counter + 1.0;
+      if (static_cast<int>(circle_counter.load()) % 2 == 1) {
+        PLANT_HOLDER_3.set_position(servo_pos[3 - 1].open);
+      } else {
+        PLANT_HOLDER_3.set_position(servo_pos[3 - 1].close);
+      }
+    }
+    if (ps3.get_key_down(PS3Key::TRIANGLE)) {
+      set_mecha_command(MechaCommand::BLOCK_HOLD_AND_LIFT_UP);
+    }
+    if (ps3.get_key_down(PS3Key::SQUARE)) {
+      set_mecha_command(MechaCommand::F_BLOCK_RELEASE);
+    }
+    if (ps3.get_key_down(PS3Key::CROSS)) {
+      set_mecha_command(MechaCommand::R_BLOCK_RELEASE);
+    }
+    if (ps3.get_key_down(PS3Key::L1)) {
+      set_mecha_command(MechaCommand::RISE_ARM);
+    }
+    if (ps3.get_key_down(PS3Key::L2)) {
+      set_mecha_command(MechaCommand::CLOSE_ARM);
+    }
+    if (ps3.get_key_down(PS3Key::R2)) {
+      set_mecha_command(MechaCommand::OPEN_ARM);
+    }
+    if (ps3.get_key_down(PS3Key::DOWN)) {
+      target_yaw = mae_theta;
+    }
+    if (ps3.get_key_down(PS3Key::UP)) {
+      target_yaw = ushiro_theta;
     }
     if (ps3.get_key_down(PS3Key::RIGHT)) {
       target_yaw = migi_theta;
     }
-    if (ps3.get_key_down(PS3Key::UP)) {
-      target_yaw = mae_theta;
+    if (ps3.get_key_down(PS3Key::LEFT)) {
+      target_yaw = hidari_theta;
     }
-    if (ps3.get_key_down(PS3Key::DOWN)) {
-      target_yaw = ushiro_theta;
+    switch (mecha_command) {
+    case MechaCommand::NONE: {
+      break;
     }
-    // if (ps3.get_key(PS3Key::R2)) {
-    //   BLOCK_HOLDER_6.set_position(2020);
-    // }
-    // if (ps3.get_key(PS3Key::L2)) {
-    //   BLOCK_HOLDER_6.set_position(3036);
-    // }
+    case MechaCommand::PLANT_HOLD: {
+      PLANT_HOLDER_3.set_position(servo_pos[3 - 1].close);
+      break;
+    }
+    case MechaCommand::PLANT_RELEASE: {
+      PLANT_HOLDER_3.set_position(servo_pos[3 - 1].open);
+      break;
+    }
+    case MechaCommand::BLOCK_HOLD_AND_LIFT_UP: {
+      BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].close);
+      BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].close);
+      if ((BLOCK_HOLDER_5.get_position() == servo_pos[5 - 1].close) &&
+          (BLOCK_HOLDER_6.get_position() == servo_pos[6 - 1].close)) {
 
-    // IMUのyaw角から旋回補正を作る。旋回成分は3輪すべてに加算されるため、
-    // 前後・左右・斜めのどの並進方向でもtarget_yawを保って直進する。
+        BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
+      } else {
+      }
+      break;
+    }
+    case MechaCommand::F_BLOCK_RELEASE: {
+      BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].open);
+      break;
+    }
+    case MechaCommand::R_BLOCK_RELEASE: {
+      BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].open);
+      break;
+    }
+    case MechaCommand::BLOCK_LIFT_DOWN: {
+      BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].close);
+      break;
+    }
+    case MechaCommand::UP_ARM: {
+      break;
+    }
+    case MechaCommand::DOWN_ARM: {
+      break;
+    }
+    case MechaCommand::RISE_ARM: {
+      RAIL_REVO_2.set_position(SERVO2_ARM_RAISED_POSITION);
+      set_mecha_command(MechaCommand::NONE);
+      break;
+    }
+    case MechaCommand::CLOSE_ARM: {
+      arm_hand_state = next_arm_hand_close_state(arm_hand_state);
+      if (arm_hand_state == ArmHandState::PLANT_CLOSED) {
+        BLOCK_PUTTER_1.set_position(servo1_plant_close);
+      } else {
+        BLOCK_PUTTER_1.set_position(servo1_block_close);
+      }
+      set_mecha_command(MechaCommand::NONE);
+      break;
+    }
+    case MechaCommand::OPEN_ARM: {
+      BLOCK_PUTTER_1.set_position(servo_pos[1 - 1].open);
+      arm_hand_state = ArmHandState::OPEN;
+      set_mecha_command(MechaCommand::NONE);
+      break;
+    }
+    }
+    target_yaw = std::remainder(target_yaw + MANUAL_TARGET_YAW_RATE * ps3.get_axis(PS3Axis::RIGHT_X) * CONTROL_DT,
+                                2.0f * std::numbers::pi);
     const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
     Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
     velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
@@ -319,19 +444,20 @@ void timer_callback(void *) {
     }
     break;
   }
-  }
-  // move_to_pose(行く場所, 次の動作)
-  // move_servo(動かすサーボ, set_position)
+}
+// move_to_pose(行く場所, 次の動作)
+// move_servo(動かすサーボ, set_position)
 
-  if (competition_running) {
-    ++competition_ticks;
-  }
-  debug_pose_x = robot_pose.x;
-  debug_pose_y = robot_pose.y;
-  debug_pose_yaw = robot_pose.yaw;
+if (competition_running) {
+  ++competition_ticks;
+}
+debug_pose_x = robot_pose.x;
+debug_pose_y = robot_pose.y;
+debug_pose_yaw = robot_pose.yaw;
 }
 
 void set_auto_control_mode(AutoControlMode mode) { auto_control_mode = mode; }
+void set_mecha_command(MechaCommand command) { mecha_command = command; }
 
 void update_localization() { robot_pose.yaw = std::remainder(imu_yaw.load(), 2.0f * std::numbers::pi); }
 
