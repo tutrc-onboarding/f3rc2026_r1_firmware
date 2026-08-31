@@ -154,7 +154,15 @@ enum class AutoControlMode {
 enum class ServorProf {
   PLANT_HOLD,
   PLANT_RELEASE,
-
+  BLOCK_HOLD_AND_LIFT_UP,
+  F_BLOCK_RELEASE,
+  R_BLOCK_RELEASE,
+  BLOCK_LIFT_DOWN,
+  UP_ARM,
+  DOWN_ARM,
+  RISE_ARM,
+  CLOSE_ARM,
+  OPEN_ARM,
 };
 
 Pose robot_pose = R2_START_POSE;
@@ -214,6 +222,11 @@ extern "C" void app_main() {
   printf("ping servo ID 6...\r\n");
   BLOCK_HOLDER_6.start();
   printf("ping servo ID 6 OK\r\n");
+
+  const auto mae_theta = imu.get_euler();
+  constexpr auto migi_theta = static_cast<float>(mae_theta) + 0.5 * std::numbers::pi;
+  constexpr auto hidari_theta = 1.0f * std::numbers::pi;
+  constexpr auto ushiro_theta = 1.5f * std::numbers::pi;
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
 
