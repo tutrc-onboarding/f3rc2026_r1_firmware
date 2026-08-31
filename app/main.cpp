@@ -318,9 +318,8 @@ extern "C" void app_main() {
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
     if (++belt_debug_print_count >= 10) {
       belt_debug_print_count = 0;
-      printf("encoder4 position: %.4f rev, velocity: %.4f rps, encorder3: %.4f rev, %.4f\r\n",
-             motor4_encoder.get_position(), motor4_encoder.get_rps(), motor3_encoder.get_position(),
-             motor3_encoder.get_rps());
+      printf("encoder4 position: %.4f rev, velocity: %.4f rps\r\n", motor4_encoder.get_position(),
+             motor4_encoder.get_rps());
     }
     halx::core::delay(10);
   }
@@ -423,7 +422,7 @@ void timer_callback(void *) {
       if ((BLOCK_HOLDER_5.get_position() == servo_pos[5 - 1].close) &&
           (BLOCK_HOLDER_6.get_position() == servo_pos[6 - 1].close)) {
 
-        BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
+        BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].close);
       } else {
       }
       break;
@@ -580,7 +579,7 @@ void control_belt_manually() {
     return;
   }
 
-  // PS3のY軸は上方向が負なので、上へ倒したときに正速度となるよう反転する。
+  // PS3のY軸は上方向が負なので、上へ倒したときに正速度となるよう反転する。←めっちゃ嘘
   float stick_y = -ps3.get_axis(PS3Axis::RIGHT_Y);
   if (std::abs(stick_y) <= BELT_STICK_DEAD_ZONE) {
     stop_belt();
