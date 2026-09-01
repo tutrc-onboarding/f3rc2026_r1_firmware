@@ -305,7 +305,7 @@ extern "C" void app_main() {
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
 
     printf("target : %F, error : %f, output : %f, vel %f\r\n", motor4_target_rps.load(), motor4_vel_error.load(),
-           std::clamp(MOTOR4_VELOCITY_KP * motor4_vel_error.load(), -1.0f, 1.0f), motor4_encoder.get_rps());
+           std::clamp(MOTOR4_VELOCITY_KP * motor4_vel_error.load(), -0.20f, 0.20f), motor4_encoder.get_rps());
     halx::core::delay(10);
   }
 }
@@ -570,5 +570,11 @@ void control_motor4_manually() {
   const float velocity_error = target_rps - motor4_encoder.get_rps();
   motor4_target_rps = target_rps;
   motor4_vel_error = velocity_error;
-  motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -1.0f, 1.0f));
+  if (motor4_encoder.get_position() <= -4.0f) {
+    motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -0.4f, 0.0f));
+  } else if (motor4_encoder.get_position() > 0.1f) {
+    motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, 0.0f, 0.4f));
+  } else {
+    motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -0.4f, 0.4f));
+  }
 }
