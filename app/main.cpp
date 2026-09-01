@@ -54,7 +54,7 @@ constexpr PIDParameters DRIVE_WHEEL_PID_PARAMS{
     .integral_upper_limit = 1.0f,
 };
 constexpr float MOTOR4_VELOCITY_KP = 0.1f;
-constexpr float MOTOR4_TARGET_RPS_SCALE = 2.0f;
+constexpr float MOTOR4_TARGET_RPS_SCALE = 3.0f;
 constexpr float MOTOR4_STICK_DEAD_ZONE = 0.08f;
 
 constexpr PIDParameters P2P_X_PID_PARAMS{
