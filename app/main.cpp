@@ -213,6 +213,10 @@ Pose robot_pose = R2_START_POSE;
 AutoControlMode auto_control_mode = AutoControlMode::EMERGENCY_STOP;
 MechaCommand mecha_command = MechaCommand::NONE;
 
+std::atomic<float> motor4_target_rps = 0.0f;
+
+std::atomic<float> motor4_vel_error = 0.0f;
+
 void timer_callback(void *);
 void update_localization();
 Velocity calculate_velocity(const Pose &now_pose, const Pose &target_pose);
@@ -300,8 +304,8 @@ extern "C" void app_main() {
     // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
 
-    printf("encoder4 position: %.4f rev, velocity: %.4f rps\r\n", motor4_encoder.get_position(),
-           motor4_encoder.get_rps());
+    printf("target : %F, error : %f, output : %f, vel %f\r\n", motor4_target_rps.load(), motor4_vel_error.load(),
+           std::clamp(MOTOR4_VELOCITY_KP * motor4_vel_error.load(), -1.0f, 1.0f), motor4_encoder.get_rps());
     halx::core::delay(10);
   }
 }
@@ -556,7 +560,7 @@ void control_motor4_manually() {
     return;
   }
 
-  const float stick_y = ps3.get_axis(PS3Axis::RIGHT_Y);
+  const float stick_y = -0.5 * ps3.get_axis(PS3Axis::RIGHT_Y);
   if (std::abs(stick_y) <= MOTOR4_STICK_DEAD_ZONE) {
     stop_motor4();
     return;
@@ -564,5 +568,7 @@ void control_motor4_manually() {
 
   const float target_rps = MOTOR4_TARGET_RPS_SCALE * stick_y;
   const float velocity_error = target_rps - motor4_encoder.get_rps();
-  motor4.set_output(MOTOR4_VELOCITY_KP * velocity_error);
+  motor4_target_rps = target_rps;
+  motor4_vel_error = velocity_error;
+  motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -1.0f, 1.0f));
 }
