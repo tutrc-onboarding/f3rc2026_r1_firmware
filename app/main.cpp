@@ -190,19 +190,30 @@ constexpr Position servo_pos[] = {
 
 constexpr int servo1_plant_close = 1017;
 constexpr int servo1_block_close = 2264;
-float i = 0;
+
+enum class ARM_INFO {
+  STORED,
+  RAISED,
+};
+
+enum class LIFT_INFO {
+  LOWERED,
+  RAISED,
+};
+
+ARM_INFO arm_info = ARM_INFO::STORED;
+LIFT_INFO lift_info = LIFT_INFO::LOWERED;
+uint32_t block_lift_delay_ticks = 0;
+
 enum class ArmHandState {
   OPEN,
   BLOCK_CLOSED,
   PLANT_CLOSED,
 };
 
-constexpr ArmHandState next_arm_hand_close_state(ArmHandState state) {
+ArmHandState next_arm_hand_close_state(ArmHandState state) {
   return state == ArmHandState::BLOCK_CLOSED ? ArmHandState::PLANT_CLOSED : ArmHandState::BLOCK_CLOSED;
 }
-
-static_assert(next_arm_hand_close_state(ArmHandState::OPEN) == ArmHandState::BLOCK_CLOSED);
-static_assert(next_arm_hand_close_state(ArmHandState::BLOCK_CLOSED) == ArmHandState::PLANT_CLOSED);
 
 ArmHandState arm_hand_state = ArmHandState::OPEN;
 
@@ -360,7 +371,12 @@ void timer_callback(void *) {
       }
     }
     if (ps3.get_key_down(PS3Key::TRIANGLE)) {
-      set_mecha_command(MechaCommand::BLOCK_HOLD_AND_LIFT_UP);
+      if (ps3.get_key(PS3Key::R1)) {
+        set_mecha_command(MechaCommand::BLOCK_LIFT_DOWN);
+      } else if (arm_info == ARM_INFO::RAISED) {
+        block_lift_delay_ticks = 0;
+        set_mecha_command(MechaCommand::BLOCK_HOLD_AND_LIFT_UP);
+      }
     }
     if (ps3.get_key_down(PS3Key::SQUARE)) {
       set_mecha_command(MechaCommand::F_BLOCK_RELEASE);
@@ -371,10 +387,10 @@ void timer_callback(void *) {
     if (ps3.get_key_down(PS3Key::L1)) {
       set_mecha_command(MechaCommand::RISE_ARM);
     }
-    if (ps3.get_key_down(PS3Key::L2)) {
+    if (ps3.get_key_down(PS3Key::L2) && arm_info == ARM_INFO::RAISED) {
       set_mecha_command(MechaCommand::CLOSE_ARM);
     }
-    if (ps3.get_key_down(PS3Key::R2)) {
+    if (ps3.get_key_down(PS3Key::R2) && arm_info == ARM_INFO::RAISED) {
       set_mecha_command(MechaCommand::OPEN_ARM);
     }
     if (ps3.get_key_down(PS3Key::DOWN)) {
@@ -402,11 +418,18 @@ void timer_callback(void *) {
       break;
     }
     case MechaCommand::BLOCK_HOLD_AND_LIFT_UP: {
+      if (arm_info != ARM_INFO::RAISED) {
+        set_mecha_command(MechaCommand::NONE);
+        break;
+      }
+
       BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].close);
       BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].close);
-      i = i + 1;
-      if (i == 10) {
+      block_lift_delay_ticks++;
+      if (block_lift_delay_ticks >= 10) {
         BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].close);
+        lift_info = LIFT_INFO::RAISED;
+        set_mecha_command(MechaCommand::NONE);
       }
 
       break;
@@ -420,7 +443,9 @@ void timer_callback(void *) {
       break;
     }
     case MechaCommand::BLOCK_LIFT_DOWN: {
-      BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].close);
+      BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
+      lift_info = LIFT_INFO::LOWERED;
+      set_mecha_command(MechaCommand::NONE);
       break;
     }
     case MechaCommand::UP_ARM: {
@@ -431,10 +456,16 @@ void timer_callback(void *) {
     }
     case MechaCommand::RISE_ARM: {
       RAIL_REVO_2.set_position(SERVO2_ARM_RAISED_POSITION);
+      arm_info = ARM_INFO::RAISED;
       set_mecha_command(MechaCommand::NONE);
       break;
     }
     case MechaCommand::CLOSE_ARM: {
+      if (arm_info != ARM_INFO::RAISED) {
+        set_mecha_command(MechaCommand::NONE);
+        break;
+      }
+
       arm_hand_state = next_arm_hand_close_state(arm_hand_state);
       if (arm_hand_state == ArmHandState::PLANT_CLOSED) {
         BLOCK_PUTTER_1.set_position(servo1_plant_close);
@@ -445,6 +476,11 @@ void timer_callback(void *) {
       break;
     }
     case MechaCommand::OPEN_ARM: {
+      if (arm_info != ARM_INFO::RAISED) {
+        set_mecha_command(MechaCommand::NONE);
+        break;
+      }
+
       BLOCK_PUTTER_1.set_position(servo_pos[1 - 1].open);
       arm_hand_state = ArmHandState::OPEN;
       set_mecha_command(MechaCommand::NONE);
@@ -555,7 +591,7 @@ void stop_drive_wheels() {
 void stop_motor4() { motor4.set_output(0.0f); }
 
 void control_motor4_manually() {
-  if (!ps3.get_key(PS3Key::R1)) {
+  if (arm_info != ARM_INFO::RAISED || !ps3.get_key(PS3Key::R1)) {
     stop_motor4();
     return;
   }
