@@ -287,8 +287,8 @@ extern "C" void app_main() {
   printf("ping servo ID 6 OK\r\n");
 
   const auto mae_theta = std::get<0>(*imu.get_euler());
-  const auto migi_theta = mae_theta + 0.5f * static_cast<float>(std::numbers::pi);
-  const auto hidari_theta = mae_theta + 1.5f * static_cast<float>(std::numbers::pi);
+  const auto migi_theta = mae_theta + 1.5f * static_cast<float>(std::numbers::pi);
+  const auto hidari_theta = mae_theta + 0.5f * static_cast<float>(std::numbers::pi);
   const auto ushiro_theta = mae_theta + 1.0f * static_cast<float>(std::numbers::pi);
   target_yaw = mae_theta;
   BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
@@ -315,8 +315,8 @@ extern "C" void app_main() {
     // printf("world_velocity.yaw: %f rad/s, imu_yaw: %f rad, target_yaw: %f rad, servo6_pos: %f \r\n",
     //        debug_world_velocity_yaw.load(), imu_yaw.load(), target_yaw, BLOCK_HOLDER_6.get_position());
 
-    printf("target : %F, error : %f, output : %f, vel %f\r\n", motor4_target_rps.load(), motor4_vel_error.load(),
-           std::clamp(MOTOR4_VELOCITY_KP * motor4_vel_error.load(), -0.20f, 0.20f), motor4_encoder.get_rps());
+    // printf("target : %F, error : %f, output : %f, vel %f\r\n", motor4_target_rps.load(), motor4_vel_error.load(),
+    //        std::clamp(MOTOR4_VELOCITY_KP * motor4_vel_error.load(), -0.20f, 0.20f), motor4_encoder.get_rps());
     halx::core::delay(10);
   }
 }
@@ -393,17 +393,17 @@ void timer_callback(void *) {
     if (ps3.get_key_down(PS3Key::R2) && arm_info == ARM_INFO::RAISED) {
       set_mecha_command(MechaCommand::OPEN_ARM);
     }
-    if (ps3.get_key_down(PS3Key::DOWN)) {
-      target_yaw = mae_theta;
+    if (ps3.get_key_down(PS3Key::DOWN) && ps3.get_key(PS3Key::R1)) {
+      target_yaw = hidari_theta;
     }
-    if (ps3.get_key_down(PS3Key::UP)) {
-      target_yaw = ushiro_theta;
-    }
-    if (ps3.get_key_down(PS3Key::RIGHT)) {
+    if (ps3.get_key_down(PS3Key::UP) && ps3.get_key(PS3Key::R1)) {
       target_yaw = migi_theta;
     }
-    if (ps3.get_key_down(PS3Key::LEFT)) {
-      target_yaw = hidari_theta;
+    if (ps3.get_key_down(PS3Key::RIGHT) && ps3.get_key(PS3Key::R1)) {
+      target_yaw = mae_theta;
+    }
+    if (ps3.get_key_down(PS3Key::LEFT) && ps3.get_key(PS3Key::R1)) {
+      target_yaw = ushiro_theta;
     }
     switch (mecha_command) {
     case MechaCommand::NONE: {
@@ -487,17 +487,34 @@ void timer_callback(void *) {
       break;
     }
     }
-    if (!ps3.get_key(PS3Key::R1)) {
+    const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
+    Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
+    const bool cross_button_pressed =
+        ps3.get_key(PS3Key::UP) || ps3.get_key(PS3Key::DOWN) || ps3.get_key(PS3Key::RIGHT) || ps3.get_key(PS3Key::LEFT);
+    if (!ps3.get_key(PS3Key::R1) && cross_button_pressed) {
+      velocity.x = 0.0f;
+      velocity.y = 0.0f;
+      if (ps3.get_key(PS3Key::UP)) {
+        velocity.y = -0.15f;
+      }
+      if (ps3.get_key(PS3Key::DOWN)) {
+        velocity.y = 0.15f;
+      }
+      if (ps3.get_key(PS3Key::RIGHT)) {
+        velocity.x = 0.2f;
+      }
+      if (ps3.get_key(PS3Key::LEFT)) {
+        velocity.x = -0.2f;
+      }
+    } else if (!ps3.get_key(PS3Key::R1)) {
+      velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+      velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
       target_yaw = std::remainder(target_yaw + MANUAL_TARGET_YAW_RATE * ps3.get_axis(PS3Axis::RIGHT_X) * CONTROL_DT,
                                   2.0f * std::numbers::pi);
     } else {
-      // R1押下中は右スティックの横方向入力をなしにした
-      target_yaw = robot_pose.yaw;
+      velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+      velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
     }
-    const Pose yaw_target_pose{robot_pose.x, robot_pose.y, target_yaw};
-    Velocity velocity = calculate_velocity(robot_pose, yaw_target_pose);
-    velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
-    velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
     if (velocity.x == 0.0f && velocity.y == 0.0f && velocity.yaw == 0.0f) {
       stop_drive_wheels();
     } else {
@@ -606,9 +623,9 @@ void control_motor4_manually() {
   const float velocity_error = target_rps - motor4_encoder.get_rps();
   motor4_target_rps = target_rps;
   motor4_vel_error = velocity_error;
-  if (motor4_encoder.get_position() <= -4.0f) {
+  if (motor4_encoder.get_position() <= -2.0f) {
     motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -0.4f, 0.0f));
-  } else if (motor4_encoder.get_position() > 0.1f) {
+  } else if (motor4_encoder.get_position() >= 2.0f) {
     motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, 0.0f, 0.4f));
   } else {
     motor4.set_output(std::clamp(MOTOR4_VELOCITY_KP * velocity_error, -0.4f, 0.4f));
