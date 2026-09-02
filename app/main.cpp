@@ -36,7 +36,8 @@ using halx::driver::UART_IT;
 using halx::peripheral::ST_TIM;
 
 constexpr float CONTROL_DT = 0.01f;
-constexpr float MANUAL_TARGET_YAW_RATE = std::numbers::pi / 2.0f; // [rad/s]
+constexpr float SPEED_SCALE = 1.25f;
+constexpr float MANUAL_TARGET_YAW_RATE = SPEED_SCALE * std::numbers::pi / 2.0f; // [rad/s]
 
 constexpr float ROBOT_RADIUS = 0.177f;
 constexpr float DRIVE_WHEEL_RADIUS = 0.050f;
@@ -59,15 +60,15 @@ constexpr float MOTOR4_STICK_DEAD_ZONE = 0.08f;
 
 constexpr PIDParameters P2P_X_PID_PARAMS{
     .kp = 1.0f,
-    .output_upper_limit = 0.3f,
+    .output_upper_limit = SPEED_SCALE * 0.3f,
 };
 constexpr PIDParameters P2P_Y_PID_PARAMS{
     .kp = 1.0f,
-    .output_upper_limit = 0.3f,
+    .output_upper_limit = SPEED_SCALE * 0.3f,
 };
 constexpr PIDParameters P2P_YAW_PID_PARAMS{
     .kp = 1.4f,
-    .output_upper_limit = std::numbers::pi / 1.5f,
+    .output_upper_limit = SPEED_SCALE * std::numbers::pi / 1.5f,
 };
 
 UART_IT<&hlpuart1> lpuart1;
@@ -511,13 +512,13 @@ void timer_callback(void *) {
         velocity.x = -0.2f;
       }
     } else if (!ps3.get_key(PS3Key::R1)) {
-      velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
-      velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
+      velocity.x = SPEED_SCALE * 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+      velocity.y = -SPEED_SCALE * 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
       target_yaw = std::remainder(target_yaw + MANUAL_TARGET_YAW_RATE * ps3.get_axis(PS3Axis::RIGHT_X) * CONTROL_DT,
                                   2.0f * std::numbers::pi);
     } else {
-      velocity.x = 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
-      velocity.y = -0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
+      velocity.x = SPEED_SCALE * 0.5f * ps3.get_axis(PS3Axis::LEFT_X);
+      velocity.y = -SPEED_SCALE * 0.5f * ps3.get_axis(PS3Axis::LEFT_Y);
     }
     if (velocity.x == 0.0f && velocity.y == 0.0f && velocity.yaw == 0.0f) {
       stop_drive_wheels();
