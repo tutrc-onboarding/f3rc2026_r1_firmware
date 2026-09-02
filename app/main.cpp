@@ -292,6 +292,8 @@ extern "C" void app_main() {
   const auto ushiro_theta = mae_theta + 1.0f * static_cast<float>(std::numbers::pi);
   target_yaw = mae_theta;
   BLOCK_LIFTER_4.set_position(servo_pos[4 - 1].open);
+  BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].close);
+  BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].close);
 
   ST_TIM<&htim6>::register_period_elapsed_callback(timer_callback, nullptr);
   ST_TIM<&htim6>::start_base_it();
@@ -344,6 +346,8 @@ void timer_callback(void *) {
     stop_drive_wheels();
     stop_motor4();
     if (ps3.get_key(PS3Key::L1) && ps3.get_key(PS3Key::R1)) {
+      BLOCK_HOLDER_5.set_position(servo_pos[5 - 1].open);
+      BLOCK_HOLDER_6.set_position(servo_pos[6 - 1].open);
       set_auto_control_mode(AutoControlMode::MANUAL);
     }
     break;
